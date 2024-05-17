@@ -1,0 +1,81 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "correspondence-viz"
+dynamic = ["version"]
+description = ''
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+keywords = []
+authors = [
+  { name = "U.N. Owen", email = "void@some.where" },
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Python :: Implementation :: PyPy",
+]
+dependencies = ["zarr", "tensorstore", "fsspec[s3]", "neuroglancer", "pydantic-bigstitcher", "pydantic-zarr"]
+
+[project.urls]
+Documentation = "https://github.com/unknown/correspondence-viz#readme"
+Issues = "https://github.com/unknown/correspondence-viz/issues"
+Source = "https://github.com/unknown/correspondence-viz"
+
+[tool.hatch.version]
+path = "src/correspondence_viz/__about__.py"
+
+[tool.hatch.envs.default]
+dependencies = [
+  "coverage[toml]>=6.5",
+  "pytest",
+]
+[tool.hatch.envs.default.scripts]
+test = "pytest {args:tests}"
+test-cov = "coverage run -m pytest {args:tests}"
+cov-report = [
+  "- coverage combine",
+  "coverage report",
+]
+cov = [
+  "test-cov",
+  "cov-report",
+]
+
+[[tool.hatch.envs.all.matrix]]
+python = ["3.8", "3.9", "3.10", "3.11", "3.12"]
+
+[tool.hatch.envs.types]
+dependencies = [
+  "mypy>=1.0.0",
+]
+[tool.hatch.envs.types.scripts]
+check = "mypy --install-types --non-interactive {args:src/correspondence_viz tests}"
+
+[tool.coverage.run]
+source_pkgs = ["correspondence_viz", "tests"]
+branch = true
+parallel = true
+omit = [
+  "src/correspondence_viz/__about__.py",
+]
+
+[tool.coverage.paths]
+correspondence_viz = ["src/correspondence_viz", "*/correspondence-viz/src/correspondence_viz"]
+tests = ["tests", "*/correspondence-viz/tests"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "no cov",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+]
