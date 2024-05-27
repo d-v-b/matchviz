@@ -75,7 +75,11 @@ def resolve_image_path(coord: TileCoordinate) -> str:
     """
     {'x': 0, 'y': 0, 'ch': 561'} -> "tile_x_0000_y_0002_z_0000_ch_488.zarr/"
     """
-    return f'tile_x_{coord['x']:04}_y_{coord['y']:04}_z_{coord['z']:04}_ch_{coord['ch']}'
+    cx = coord["x"]
+    cy = coord["y"]
+    cz = coord["z"]
+    cch = coord['ch']
+    return f'tile_x_{cx:04}_y_{cy:04}_z_{cz:04}_ch_{cch}'
 
 class PointsGroup(GroupSpec[InterestPointsGroupMeta, InterestPointsMembers]):
     members: InterestPointsMembers
