@@ -2,16 +2,13 @@
 #
 # SPDX-License-Identifier: MIT
 from __future__ import annotations
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Sequence
 import neuroglancer.coordinate_space
 import numpy as np
 import zarr
 import neuroglancer
 import os 
 from pydantic import BaseModel, BeforeValidator, Field
-import tempfile
-import atexit
-import shutil
 from pydantic_zarr.v2 import GroupSpec, ArraySpec
 from pydantic_bigstitcher import SpimData2
 from pydantic_ome_ngff.v04.multiscale import MultiscaleMetadata
@@ -85,83 +82,146 @@ class PointsGroup(GroupSpec[InterestPointsGroupMeta, InterestPointsMembers]):
     members: InterestPointsMembers
     ...
 
-def visualize_points(bdv_url: str):
-    bdv_xml = S3FileSystem(anon=True).cat_file(bdv_url)
-    bdv_model = SpimData2.from_xml(bdv_xml)
-    alignment_url = bdv_model.sequence_description.image_loader.zarr
-    assert False
+from pydantic_bigstitcher import ViewSetup
 
-def create_annotation_layer_from_points(
-        dataset: str, 
-        alignment_id: str):
+def save_interest_points(base_url: str, out_prefix: str):
+    xml_url = os.path.join(base_url, 'bigstitcher.xml')
+    bs_xml = S3FileSystem(anon=True).cat_file(xml_url)
+    bs_model = SpimData2.from_xml(bs_xml)
+    bucket = bs_model.sequence_description.image_loader.s3bucket
+    image_root_url = bs_model.sequence_description.image_loader.zarr.path
+
+    store = zarr.N5FSStore(os.path.join(base_url, 'interestpoints.n5/'), anon=True)
+    view_setup_dict: dict[str, ViewSetup] = {v.ident: v for v in bs_model.sequence_description.view_setups.view_setup}
+
+    for file in bs_model.view_interest_points.data:
+        setup_id = file.setup
+        tile_name = view_setup_dict[setup_id].name
+        save_points_tile(
+            tile_name=tile_name,
+            image_url=os.path.join(
+                f's3://{bucket}', 
+                image_root_url, 
+                f'{tile_name}.zarr'),
+            alignment_url=os.path.join(base_url, 'interestpoints.n5', file.path),
+            out_prefix=out_prefix
+            )
+
+
+def get_url(node: zarr.Group | zarr.Array) -> str:
+    store = node.store
+    if hasattr(store, "path"):
+        if hasattr(store, "fs"):
+            if isinstance(store.fs.protocol, Sequence):
+                protocol = store.fs.protocol[0]
+            else:
+                protocol = store.fs.protocol
+        else:
+            protocol = "file"
+
+        # fsstore keeps the protocol in the path, but not s3store
+        if "://" in store.path:
+            store_path = store.path.split("://")[-1]
+        else:
+            store_path = store.path
+        return f"{protocol}://{os.path.join(store_path, node.path)}"
+    else:
+        msg = (
+            f"The store associated with this object has type {type(store)}, which "
+            "cannot be resolved to a url"
+        )
+        raise ValueError(msg)
+
+def create_neuroglancer_state(
+                    image_url: str,
+                    points_url: str,
+                    layer_per_tile: bool = False,
+                    wavelength: str = '488'
+                    ):
+    from neuroglancer import ImageLayer, AnnotationLayer, ViewerState, CoordinateSpace
+    image_group = zarr.open(store=image_url, path='')
+
+    image_sources = {}
+    points_sources = {}
+    space = CoordinateSpace(
+    names=['z','y','x'], 
+    scales=[100,] * 3, 
+    units=['nm',] * 3)
+    state = ViewerState(dimensions=space)
+    shader_controls = {'normalized': {'range': [0, 255], "window": [0, 255]}}
+    
+    for name, sub_group in filter(lambda kv: f'ch_{wavelength}' in kv[0], image_group.groups()):
+        image_sources[name] = f'zarr://{get_url(sub_group)}'
+        points_fname = name.removesuffix('.zarr') + '.precomputed'
+        points_sources[name] = f'precomputed://{points_url}/{points_fname}'
+
+    if layer_per_tile:
+        for name, im_source in image_sources:
+            point_source = points_sources[name]
+            state.layers.append(
+                name=name, 
+                layer=ImageLayer(
+                    source=im_source,
+                    shaderControls=shader_controls
+                ))
+            state.layers.append(name=name, layer=AnnotationLayer(source=point_source))
+    else:
+        state.layers.append(
+            name="images", 
+            layer=ImageLayer(
+                source=list(image_sources.values()),
+                shader_controls=shader_controls))
+        state.layers.append(
+            name="points",
+            layer=AnnotationLayer(source=list(points_sources.values())))
+
+    return state
+
+def save_points_tile(
+        tile_name: str,
+        image_url: str,
+        alignment_url: str,
+        out_prefix: str,):
     """
     e.g. dataset = 'exaSPIM_3163606_2023-11-17_12-54-51'
         alignment_id = 'alignment_2024-01-09_05-00-44'
     """
-    coord: TileCoordinate = {'x': 0, 'y': 0, 'z': 0, 'ch': '488'}
-    alignment_url = f's3://aind-open-data/{dataset}_{alignment_id}/interestpoints.n5/'
-    tile_name = resolve_image_path(coord)
-    image_url = f's3://aind-open-data/{dataset}/SPIM.ome.zarr/{tile_name}.zarr'
     multi_meta = MultiscaleMetadata(**zarr.open(image_url).attrs.asdict()['multiscales'][0])
     scale = multi_meta.datasets[0].coordinateTransformations[0].scale
     trans = multi_meta.datasets[0].coordinateTransformations[1].translation
     base_coords = {axis.name: {'scale': s, 'translation': t} for axis, s, t in zip(multi_meta.axes, scale, trans)}
     alignment_store = zarr.N5FSStore(alignment_url)
-    timepoint_id = 0
-    setup_id = 0
-    prefix = f'tpId_{timepoint_id}_viewSetupId_{setup_id}'
+
     matches = zarr.open_group(
         store=alignment_store, 
-        path=os.path.join(prefix, 'beads', 'correspondences'), 
+        path='correspondences', 
         mode='r')
     points = zarr.open_group(
         store=alignment_store, 
-        path=os.path.join(prefix, 'beads', 'interestpoints'), 
+        path='interestpoints', 
         mode='r')
     # point_ids = np.array(points['id'])
     point_loc_stored = points['loc']
     # points are saved as x, y, z triplets
     point_loc = np.zeros((point_loc_stored.shape[0], point_loc_stored.shape[1] + 1), dtype=point_loc_stored.dtype)
     point_loc[:,:-1] = point_loc_stored[:] 
+
     # apply base scaling and translation
     for idx, dim in enumerate(('x','y','z')):
         local_scale = base_coords[dim]['scale']
         local_trans = base_coords[dim]['translation']
         point_loc[:, idx] += local_trans / local_scale
-        #point_loc[:, idx] += local_trans
     
     annotation_scales = [base_coords[dim]['scale'] for dim in ('x','y','z','t')]
     annotation_units = ['um', 'um', 'um', 's']
-    output_scales = [100, 100, 100, 1]
-    output_units = ['nm', 'nm', 'nm', 'ms']
     annotation_space = neuroglancer.CoordinateSpace(
         names=['x','y','z','t'],
         scales=annotation_scales,
         units=annotation_units
         )
 
-    image_coordinate_space = neuroglancer.CoordinateSpace(
-        names=['z','y','x','t'], 
-        scales=output_scales,
-        units=output_units)
-
     write_point_annotations(
-        f'{tile_name}.precomputed', 
+        f'{out_prefix}/{tile_name}.precomputed', 
         points = point_loc,
         coordinate_space=annotation_space, 
         rgba=(0, 255, 255, 255))
-
-    img_layer = neuroglancer.ImageLayer(
-        source=f'zarr://{image_url}',
-        layer_dimensions=image_coordinate_space)
-    ann_layer = neuroglancer.AnnotationLayer(
-        source=f'precomputed://http://localhost:3000/{tile_name}.precomputed',
-        )
-
-    viewer = neuroglancer.Viewer()
-    with viewer.txn() as s:
-        s.dimensions=image_coordinate_space
-        s.layers['points'] = ann_layer
-        s.layers["image"] = img_layer
-    breakpoint()
-    return viewer

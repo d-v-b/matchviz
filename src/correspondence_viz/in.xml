@@ -1,0 +1,835 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<SpimData version="0.2">
+    <BasePath type="relative">.</BasePath>
+    <SequenceDescription>
+        <ImageLoader
+            format="bdv.multimg.zarr" version="1.0">
+            <s3bucket>aind-open-data</s3bucket>
+            <zarr
+                type="absolute">
+                exaSPIM_708373_2024-04-02_19-49-38_flatfield-correction_2024-04-15_18-15-40/SPIM.ome.zarr</zarr>
+            <zgroups>
+                <zgroup setup="0" timepoint="0">
+                    <path>
+                        tile_x_0000_y_0000_z_0000_ch_488.zarr</path>
+                </zgroup>
+                <zgroup setup="1" timepoint="0">
+                    <path>tile_x_0000_y_0001_z_0000_ch_488.zarr</path>
+                </zgroup>
+                <zgroup
+                    setup="2" timepoint="0">
+                    <path>tile_x_0000_y_0002_z_0000_ch_488.zarr</path>
+                </zgroup>
+                <zgroup setup="3" timepoint="0">
+                    <path>
+                        tile_x_0001_y_0000_z_0000_ch_488.zarr</path>
+                </zgroup>
+                <zgroup setup="4" timepoint="0">
+                    <path>tile_x_0001_y_0001_z_0000_ch_488.zarr</path>
+                </zgroup>
+                <zgroup
+                    setup="5" timepoint="0">
+                    <path>tile_x_0001_y_0002_z_0000_ch_488.zarr</path>
+                </zgroup>
+                <zgroup setup="6" timepoint="0">
+                    <path>
+                        tile_x_0002_y_0000_z_0000_ch_488.zarr</path>
+                </zgroup>
+                <zgroup setup="7" timepoint="0">
+                    <path>tile_x_0002_y_0001_z_0000_ch_488.zarr</path>
+                </zgroup>
+                <zgroup
+                    setup="8" timepoint="0">
+                    <path>tile_x_0002_y_0002_z_0000_ch_488.zarr</path>
+                </zgroup>
+                <zgroup setup="9" timepoint="0">
+                    <path>
+                        tile_x_0003_y_0000_z_0000_ch_488.zarr</path>
+                </zgroup>
+                <zgroup setup="10" timepoint="0">
+                    <path>tile_x_0003_y_0001_z_0000_ch_488.zarr</path>
+                </zgroup>
+                <zgroup
+                    setup="11" timepoint="0">
+                    <path>tile_x_0003_y_0002_z_0000_ch_488.zarr</path>
+                </zgroup>
+                <zgroup setup="12" timepoint="0">
+                    <path>
+                        tile_x_0004_y_0000_z_0000_ch_488.zarr</path>
+                </zgroup>
+                <zgroup setup="13" timepoint="0">
+                    <path>tile_x_0004_y_0001_z_0000_ch_488.zarr</path>
+                </zgroup>
+                <zgroup
+                    setup="14" timepoint="0">
+                    <path>tile_x_0004_y_0002_z_0000_ch_488.zarr</path>
+                </zgroup>
+            </zgroups>
+        </ImageLoader>
+        <ViewSetups>
+            <ViewSetup>
+                <id>
+                    0</id>
+                <name>tile_x_0000_y_0000_z_0000_ch_488</name>
+                <size>14192 10640 28672</size>
+                <voxelSize>
+                    <unit>\xc2\xb5m</unit>
+                    <size>0.7480000148631624 0.7479999743009398 1.0</size>
+                </voxelSize>
+                <attributes>
+                    <illumination>0</illumination>
+                    <channel>0</channel>
+                    <tile>0</tile>
+                    <angle>0</angle>
+                </attributes>
+            </ViewSetup>
+            <ViewSetup>
+                <id>1</id>
+                <name>tile_x_0000_y_0001_z_0000_ch_488</name>
+                <size>14192 10640
+                    28672</size>
+                <voxelSize>
+                    <unit>\xc2\xb5m</unit>
+                    <size>0.7480000148631624
+                        0.7479999743009398 1.0</size>
+                </voxelSize>
+                <attributes>
+                    <illumination>0</illumination>
+                    <channel>0</channel>
+                    <tile>1</tile>
+                    <angle>0</angle>
+                </attributes>
+            </ViewSetup>
+            <ViewSetup>
+                <id>2</id>
+                <name>tile_x_0000_y_0002_z_0000_ch_488</name>
+                <size>14192
+                    10640 28672</size>
+                <voxelSize>
+                    <unit>\xc2\xb5m</unit>
+                    <size>0.7480000148631624
+                        0.7479999743009398 1.0</size>
+                </voxelSize>
+                <attributes>
+                    <illumination>0</illumination>
+                    <channel>0</channel>
+                    <tile>2</tile>
+                    <angle>0</angle>
+                </attributes>
+            </ViewSetup>
+            <ViewSetup>
+                <id>3</id>
+                <name>tile_x_0001_y_0000_z_0000_ch_488</name>
+                <size>14192
+                    10640 28672</size>
+                <voxelSize>
+                    <unit>\xc2\xb5m</unit>
+                    <size>0.7480000148631624
+                        0.7479999743009398 1.0</size>
+                </voxelSize>
+                <attributes>
+                    <illumination>0</illumination>
+                    <channel>0</channel>
+                    <tile>3</tile>
+                    <angle>0</angle>
+                </attributes>
+            </ViewSetup>
+            <ViewSetup>
+                <id>4</id>
+                <name>tile_x_0001_y_0001_z_0000_ch_488</name>
+                <size>14192
+                    10640 28672</size>
+                <voxelSize>
+                    <unit>\xc2\xb5m</unit>
+                    <size>0.7480000148631624
+                        0.7479999743009398 1.0</size>
+                </voxelSize>
+                <attributes>
+                    <illumination>0</illumination>
+                    <channel>0</channel>
+                    <tile>4</tile>
+                    <angle>0</angle>
+                </attributes>
+            </ViewSetup>
+            <ViewSetup>
+                <id>5</id>
+                <name>tile_x_0001_y_0002_z_0000_ch_488</name>
+                <size>14192
+                    10640 28672</size>
+                <voxelSize>
+                    <unit>\xc2\xb5m</unit>
+                    <size>0.7480000148631624
+                        0.7479999743009398 1.0</size>
+                </voxelSize>
+                <attributes>
+                    <illumination>0</illumination>
+                    <channel>0</channel>
+                    <tile>5</tile>
+                    <angle>0</angle>
+                </attributes>
+            </ViewSetup>
+            <ViewSetup>
+                <id>6</id>
+                <name>tile_x_0002_y_0000_z_0000_ch_488</name>
+                <size>14192
+                    10640 28672</size>
+                <voxelSize>
+                    <unit>\xc2\xb5m</unit>
+                    <size>0.7480000148631624
+                        0.7479999743009398 1.0</size>
+                </voxelSize>
+                <attributes>
+                    <illumination>0</illumination>
+                    <channel>0</channel>
+                    <tile>6</tile>
+                    <angle>0</angle>
+                </attributes>
+            </ViewSetup>
+            <ViewSetup>
+                <id>7</id>
+                <name>tile_x_0002_y_0001_z_0000_ch_488</name>
+                <size>14192
+                    10640 28672</size>
+                <voxelSize>
+                    <unit>\xc2\xb5m</unit>
+                    <size>0.7480000148631624
+                        0.7479999743009398 1.0</size>
+                </voxelSize>
+                <attributes>
+                    <illumination>0</illumination>
+                    <channel>0</channel>
+                    <tile>7</tile>
+                    <angle>0</angle>
+                </attributes>
+            </ViewSetup>
+            <ViewSetup>
+                <id>8</id>
+                <name>tile_x_0002_y_0002_z_0000_ch_488</name>
+                <size>14192
+                    10640 28672</size>
+                <voxelSize>
+                    <unit>\xc2\xb5m</unit>
+                    <size>0.7480000148631624
+                        0.7479999743009398 1.0</size>
+                </voxelSize>
+                <attributes>
+                    <illumination>0</illumination>
+                    <channel>0</channel>
+                    <tile>8</tile>
+                    <angle>0</angle>
+                </attributes>
+            </ViewSetup>
+            <ViewSetup>
+                <id>9</id>
+                <name>tile_x_0003_y_0000_z_0000_ch_488</name>
+                <size>14192
+                    10640 28672</size>
+                <voxelSize>
+                    <unit>\xc2\xb5m</unit>
+                    <size>0.7480000148631624
+                        0.7479999743009398 1.0</size>
+                </voxelSize>
+                <attributes>
+                    <illumination>0</illumination>
+                    <channel>0</channel>
+                    <tile>9</tile>
+                    <angle>0</angle>
+                </attributes>
+            </ViewSetup>
+            <ViewSetup>
+                <id>10</id>
+                <name>tile_x_0003_y_0001_z_0000_ch_488</name>
+                <size>14192
+                    10640 28672</size>
+                <voxelSize>
+                    <unit>\xc2\xb5m</unit>
+                    <size>0.7480000148631624
+                        0.7479999743009398 1.0</size>
+                </voxelSize>
+                <attributes>
+                    <illumination>0</illumination>
+                    <channel>0</channel>
+                    <tile>10</tile>
+                    <angle>0</angle>
+                </attributes>
+            </ViewSetup>
+            <ViewSetup>
+                <id>11</id>
+                <name>
+                    tile_x_0003_y_0002_z_0000_ch_488</name>
+                <size>14192 10640 28672</size>
+                <voxelSize>
+                    <unit>
+                        \xc2\xb5m</unit>
+                    <size>0.7480000148631624 0.7479999743009398 1.0</size>
+                </voxelSize>
+                <attributes>
+                    <illumination>0</illumination>
+                    <channel>0</channel>
+                    <tile>11</tile>
+                    <angle>
+                        0</angle>
+                </attributes>
+            </ViewSetup>
+            <ViewSetup>
+                <id>12</id>
+                <name>
+                    tile_x_0004_y_0000_z_0000_ch_488</name>
+                <size>14192 10640 28672</size>
+                <voxelSize>
+                    <unit>
+                        \xc2\xb5m</unit>
+                    <size>0.7480000148631624 0.7479999743009398 1.0</size>
+                </voxelSize>
+                <attributes>
+                    <illumination>0</illumination>
+                    <channel>0</channel>
+                    <tile>12</tile>
+                    <angle>
+                        0</angle>
+                </attributes>
+            </ViewSetup>
+            <ViewSetup>
+                <id>13</id>
+                <name>
+                    tile_x_0004_y_0001_z_0000_ch_488</name>
+                <size>14192 10640 28672</size>
+                <voxelSize>
+                    <unit>
+                        \xc2\xb5m</unit>
+                    <size>0.7480000148631624 0.7479999743009398 1.0</size>
+                </voxelSize>
+                <attributes>
+                    <illumination>0</illumination>
+                    <channel>0</channel>
+                    <tile>13</tile>
+                    <angle>
+                        0</angle>
+                </attributes>
+            </ViewSetup>
+            <ViewSetup>
+                <id>14</id>
+                <name>
+                    tile_x_0004_y_0002_z_0000_ch_488</name>
+                <size>14192 10640 28672</size>
+                <voxelSize>
+                    <unit>
+                        \xc2\xb5m</unit>
+                    <size>0.7480000148631624 0.7479999743009398 1.0</size>
+                </voxelSize>
+                <attributes>
+                    <illumination>0</illumination>
+                    <channel>0</channel>
+                    <tile>14</tile>
+                    <angle>
+                        0</angle>
+                </attributes>
+            </ViewSetup>
+            <Attributes name="illumination">
+                <Illumination>
+                    <id>0</id>
+                    <name>0</name>
+                </Illumination>
+            </Attributes>
+            <Attributes
+                name="channel">
+                <Channel>
+                    <id>0</id>
+                    <name>0</name>
+                </Channel>
+            </Attributes>
+            <Attributes name="tile">
+                <Tile>
+                    <id>0</id>
+                    <name>
+                        tile_x_0000_y_0000_z_0000_ch_488</name>
+                </Tile>
+                <Tile>
+                    <id>1</id>
+                    <name>
+                        tile_x_0000_y_0001_z_0000_ch_488</name>
+                </Tile>
+                <Tile>
+                    <id>2</id>
+                    <name>
+                        tile_x_0000_y_0002_z_0000_ch_488</name>
+                </Tile>
+                <Tile>
+                    <id>3</id>
+                    <name>
+                        tile_x_0001_y_0000_z_0000_ch_488</name>
+                </Tile>
+                <Tile>
+                    <id>4</id>
+                    <name>
+                        tile_x_0001_y_0001_z_0000_ch_488</name>
+                </Tile>
+                <Tile>
+                    <id>5</id>
+                    <name>
+                        tile_x_0001_y_0002_z_0000_ch_488</name>
+                </Tile>
+                <Tile>
+                    <id>6</id>
+                    <name>
+                        tile_x_0002_y_0000_z_0000_ch_488</name>
+                </Tile>
+                <Tile>
+                    <id>7</id>
+                    <name>
+                        tile_x_0002_y_0001_z_0000_ch_488</name>
+                </Tile>
+                <Tile>
+                    <id>8</id>
+                    <name>
+                        tile_x_0002_y_0002_z_0000_ch_488</name>
+                </Tile>
+                <Tile>
+                    <id>9</id>
+                    <name>
+                        tile_x_0003_y_0000_z_0000_ch_488</name>
+                </Tile>
+                <Tile>
+                    <id>10</id>
+                    <name>
+                        tile_x_0003_y_0001_z_0000_ch_488</name>
+                </Tile>
+                <Tile>
+                    <id>11</id>
+                    <name>
+                        tile_x_0003_y_0002_z_0000_ch_488</name>
+                </Tile>
+                <Tile>
+                    <id>12</id>
+                    <name>
+                        tile_x_0004_y_0000_z_0000_ch_488</name>
+                </Tile>
+                <Tile>
+                    <id>13</id>
+                    <name>
+                        tile_x_0004_y_0001_z_0000_ch_488</name>
+                </Tile>
+                <Tile>
+                    <id>14</id>
+                    <name>
+                        tile_x_0004_y_0002_z_0000_ch_488</name>
+                </Tile>
+            </Attributes>
+            <Attributes
+                name="angle">
+                <Angle>
+                    <id>0</id>
+                    <name>0</name>
+                </Angle>
+            </Attributes>
+        </ViewSetups>
+        <Timepoints type="pattern">
+            <integerpattern>0</integerpattern>
+        </Timepoints>
+        <MissingViews />
+    </SequenceDescription>
+    <ViewRegistrations>
+        <ViewRegistration
+            timepoint="0" setup="0">
+            <ViewTransform type="affine">
+                <Name>
+                    InterpolatedAffineModel3D</Name>
+                <affine>1.0064694598726402 -0.005935317175007711
+                    -0.002340606752535989 -67.19158118915246 -0.002190828085734458 1.027782168030016
+                    0.002481932369365794 300.09290336146523 0.001290833396627382
+                    -0.005145523893176262
+                    1.0023908834260729 -29.018209730401942</affine>
+            </ViewTransform>
+            <ViewTransform
+                type="affine">
+                <Name>TranslationModel3D</Name>
+                <affine>1.0 0.0 0.0
+                    -107.87535019432016 0.0 1.0 0.0 -21.676163043377528 0.0 0.0 1.0
+                    -23.133993370747703</affine>
+            </ViewTransform>
+            <ViewTransform type="affine">
+                <Name>Translation to Nominal Grid</Name>
+                <affine>1.0
+                    0.0 0.0 -7096.0 0.0 1.0 0.0 -23408.0003 0.0 0.0 1.0 -28672.0</affine>
+            </ViewTransform>
+        </ViewRegistration>
+        <ViewRegistration timepoint="0" setup="1">
+            <ViewTransform type="affine">
+                <Name>
+                    InterpolatedAffineModel3D</Name>
+                <affine>1.0016878265504146 -0.0018916413606821303
+                    7.580632276207907E-5 -15.894672482013476 -0.0037529060942587465
+                    1.0100156746584221
+                    0.0020660463207852484 43.76496667108502 4.0497706073121904E-4
+                    -0.0017424650752850697
+                    1.002562056853727 13.288235196358801</affine>
+            </ViewTransform>
+            <ViewTransform
+                type="affine">
+                <Name>TranslationModel3D</Name>
+                <affine>1.0 0.0 0.0
+                    -87.23219837279407 0.0 1.0 0.0 45.278044172519 0.0 0.0 1.0 -20.40343335365833</affine>
+            </ViewTransform>
+            <ViewTransform type="affine">
+                <Name>Translation to Nominal Grid</Name>
+                <affine>1.0
+                    0.0 0.0 -7096.0 0.0 1.0 0.0 -14363.9998 0.0 0.0 1.0 -28672.0</affine>
+            </ViewTransform>
+        </ViewRegistration>
+        <ViewRegistration timepoint="0" setup="2">
+            <ViewTransform type="affine">
+                <Name>
+                    InterpolatedAffineModel3D</Name>
+                <affine>0.9981025043459839 -0.0010490505666702332
+                    0.0015867495461716037 15.225926245715277 -0.0028282847979255155
+                    1.003796149141243
+                    0.005311179830890903 59.38346947560925 -0.0013983786183954655
+                    -4.311300268259652E-4
+                    0.999334526631136 -21.522430647996956</affine>
+            </ViewTransform>
+            <ViewTransform
+                type="affine">
+                <Name>TranslationModel3D</Name>
+                <affine>1.0 0.0 0.0
+                    -89.90649837012506 0.0 1.0 0.0 -14.916856607816953 0.0 0.0 1.0
+                    -12.97075831433358</affine>
+            </ViewTransform>
+            <ViewTransform type="affine">
+                <Name>Translation to Nominal Grid</Name>
+                <affine>1.0
+                    0.0 0.0 -7096.0 0.0 1.0 0.0 -5320.0 0.0 0.0 1.0 -28672.0</affine>
+            </ViewTransform>
+        </ViewRegistration>
+        <ViewRegistration timepoint="0" setup="3">
+            <ViewTransform type="affine">
+                <Name>
+                    InterpolatedAffineModel3D</Name>
+                <affine>1.0010113817541366 2.1586127765437153E-5
+                    1.3716072166198011E-4 20.538975001703616 0.002679807077237535 1.0078959328219759
+                    6.610002684967621E-4 187.5664759570587 -7.52870944767788E-4
+                    -0.0038982220585248584
+                    1.001782448464629 -49.77074467768398</affine>
+            </ViewTransform>
+            <ViewTransform
+                type="affine">
+                <Name>TranslationModel3D</Name>
+                <affine>1.0 0.0 0.0
+                    -76.0662740307962 0.0 1.0 0.0 6.0796676678673975 0.0 0.0 1.0 -1.165844006161933</affine>
+            </ViewTransform>
+            <ViewTransform type="affine">
+                <Name>Translation to Nominal Grid</Name>
+                <affine>1.0
+                    0.0 0.0 -19159.1998 0.0 1.0 0.0 -23408.0003 0.0 0.0 1.0 -28672.0</affine>
+            </ViewTransform>
+        </ViewRegistration>
+        <ViewRegistration timepoint="0" setup="4">
+            <ViewTransform
+                type="affine">
+                <Name>InterpolatedAffineModel3D</Name>
+                <affine>1.000111855720718
+                    -5.542367625399287E-4 3.006144235027186E-4 4.092802775244445
+                    0.0011176520024680657
+                    0.9983440597048479 0.00128378152264952 44.57218280641328 -7.214462245155504E-4
+                    -8.402039163041906E-4 0.9996989722033963 -24.691469182917718</affine>
+            </ViewTransform>
+            <ViewTransform
+                type="affine">
+                <Name>TranslationModel3D</Name>
+                <affine>1.0 0.0 0.0
+                    -56.61430298990672 0.0 1.0 0.0 -25.735013283969238 0.0 0.0 1.0 -9.6100414853463</affine>
+            </ViewTransform>
+            <ViewTransform type="affine">
+                <Name>Translation to Nominal Grid</Name>
+                <affine>1.0
+                    0.0 0.0 -19159.1998 0.0 1.0 0.0 -14363.9998 0.0 0.0 1.0 -28672.0</affine>
+            </ViewTransform>
+        </ViewRegistration>
+        <ViewRegistration timepoint="0" setup="5">
+            <ViewTransform
+                type="affine">
+                <Name>InterpolatedAffineModel3D</Name>
+                <affine>0.998977093897548
+                    -6.85685982182911E-4 0.001213849764691246 6.06923729208658 6.701671710597068E-4
+                    0.9999171685620739 0.0021277938340868094 66.53478871059133 -0.001083789037301561
+                    -0.0014220771158612825 0.997877027910757 -78.45767326168425</affine>
+            </ViewTransform>
+            <ViewTransform
+                type="affine">
+                <Name>TranslationModel3D</Name>
+                <affine>1.0 0.0 0.0
+                    -29.23966164707599 0.0 1.0 0.0 -93.28455729452708 0.0 0.0 1.0 8.753631885349023</affine>
+            </ViewTransform>
+            <ViewTransform type="affine">
+                <Name>Translation to Nominal Grid</Name>
+                <affine>1.0
+                    0.0 0.0 -19159.1998 0.0 1.0 0.0 -5320.0 0.0 0.0 1.0 -28672.0</affine>
+            </ViewTransform>
+        </ViewRegistration>
+        <ViewRegistration timepoint="0" setup="6">
+            <ViewTransform type="affine">
+                <Name>
+                    InterpolatedAffineModel3D</Name>
+                <affine>1.0003172059097576 -2.4392830866409951E-4
+                    -2.1667406077260448E-7 4.861724690725772 0.001904692689296048 0.9991335417412563
+                    6.64918206357E-5 40.81878224988479 3.755684297182607E-4 -0.0016170139691403294
+                    1.0007712609209163 6.547618620719368</affine>
+            </ViewTransform>
+            <ViewTransform
+                type="affine">
+                <Name>TranslationModel3D</Name>
+                <affine>1.0 0.0 0.0
+                    -21.803601727868227 0.0 1.0 0.0 44.59267721242395 0.0 0.0 1.0
+                    -18.139142116167932</affine>
+            </ViewTransform>
+            <ViewTransform type="affine">
+                <Name>Translation to Nominal Grid</Name>
+                <affine>1.0
+                    0.0 0.0 -31222.3997 0.0 1.0 0.0 -23408.0003 0.0 0.0 1.0 -28672.0</affine>
+            </ViewTransform>
+        </ViewRegistration>
+        <ViewRegistration timepoint="0" setup="7">
+            <ViewTransform
+                type="affine">
+                <Name>InterpolatedAffineModel3D</Name>
+                <affine>1.0 0.0 0.0
+                    0.0 0.0 1.0 0.0 0.0 0.0 0.0 1.0 0.0</affine>
+            </ViewTransform>
+            <ViewTransform
+                type="affine">
+                <Name>TranslationModel3D</Name>
+                <affine>1.0 0.0 0.0 0.0 0.0
+                    1.0 0.0 0.0 0.0 0.0 1.0 0.0</affine>
+            </ViewTransform>
+            <ViewTransform type="affine">
+                <Name>Translation
+                    to Nominal Grid</Name>
+                <affine>1.0 0.0 0.0 -31222.3997 0.0 1.0 0.0 -14363.9998 0.0 0.0 1.0
+                    -28672.0</affine>
+            </ViewTransform>
+        </ViewRegistration>
+        <ViewRegistration
+            timepoint="0" setup="8">
+            <ViewTransform type="affine">
+                <Name>
+                    InterpolatedAffineModel3D</Name>
+                <affine>0.9996869765724508 1.265842601798E-4
+                    1.3380061427694935E-4 -3.274926638880147 -0.0011731467251566133
+                    0.9959710075563915
+                    -9.606019554069314E-4 -72.7357944278722 3.342072780225973E-5
+                    0.001264713353001324
+                    0.9987857952717686 -23.906258648101723</affine>
+            </ViewTransform>
+            <ViewTransform
+                type="affine">
+                <Name>TranslationModel3D</Name>
+                <affine>1.0 0.0 0.0
+                    32.24449748178449 0.0 1.0 0.0 -64.60631714839838 0.0 0.0 1.0 31.441544733315823</affine>
+            </ViewTransform>
+            <ViewTransform type="affine">
+                <Name>Translation to Nominal Grid</Name>
+                <affine>1.0
+                    0.0 0.0 -31222.3997 0.0 1.0 0.0 -5320.0 0.0 0.0 1.0 -28672.0</affine>
+            </ViewTransform>
+        </ViewRegistration>
+        <ViewRegistration timepoint="0" setup="9">
+            <ViewTransform type="affine">
+                <Name>
+                    InterpolatedAffineModel3D</Name>
+                <affine>1.0002126966830078 -2.595000378622838E-5
+                    -4.650352170389339E-4 -4.191033443970577 -9.9457450646002E-5 0.9990072785505928
+                    2.1814172599206712E-4 -17.70142178669882 9.01799486219214E-4
+                    -5.087685506248135E-4
+                    0.9992500805352881 7.4747261628192065</affine>
+            </ViewTransform>
+            <ViewTransform
+                type="affine">
+                <Name>TranslationModel3D</Name>
+                <affine>1.0 0.0 0.0
+                    46.940445052729046 0.0 1.0 0.0 61.42605115717197 0.0 0.0 1.0 -29.05114030108598</affine>
+            </ViewTransform>
+            <ViewTransform type="affine">
+                <Name>Translation to Nominal Grid</Name>
+                <affine>1.0
+                    0.0 0.0 -43285.6033 0.0 1.0 0.0 -23408.0003 0.0 0.0 1.0 -28672.0</affine>
+            </ViewTransform>
+        </ViewRegistration>
+        <ViewRegistration timepoint="0" setup="10">
+            <ViewTransform
+                type="affine">
+                <Name>InterpolatedAffineModel3D</Name>
+                <affine>0.9999142221358704
+                    1.630016926082784E-5 -4.537703708669203E-4 -14.92221802330275
+                    -3.8410357763841584E-4
+                    0.9988478972770652 2.537680600409465E-4 -30.482995165874623 7.470265772148869E-4
+                    5.310296634709224E-4 0.9986476100368772 2.0165957071116285</affine>
+            </ViewTransform>
+            <ViewTransform
+                type="affine">
+                <Name>TranslationModel3D</Name>
+                <affine>1.0 0.0 0.0
+                    72.15819188821479 0.0 1.0 0.0 20.71014661936715 0.0 0.0 1.0 -22.641345384061424</affine>
+            </ViewTransform>
+            <ViewTransform type="affine">
+                <Name>Translation to Nominal Grid</Name>
+                <affine>1.0
+                    0.0 0.0 -43285.6033 0.0 1.0 0.0 -14363.9998 0.0 0.0 1.0 -28672.0</affine>
+            </ViewTransform>
+        </ViewRegistration>
+        <ViewRegistration timepoint="0" setup="11">
+            <ViewTransform
+                type="affine">
+                <Name>InterpolatedAffineModel3D</Name>
+                <affine>0.9996990381489542
+                    3.612837883784884E-4 -3.481651875238763E-4 -19.86807346299557
+                    -4.1824889838427276E-4
+                    0.998278082400189 -1.1211117139182077E-5 -38.76294045219946
+                    3.4422291769177087E-4
+                    0.0021184657323886093 0.9980700472931057 -15.103332570101339</affine>
+            </ViewTransform>
+            <ViewTransform
+                type="affine">
+                <Name>TranslationModel3D</Name>
+                <affine>1.0 0.0 0.0
+                    102.6387532683002 0.0 1.0 0.0 -30.424283964377537 0.0 0.0 1.0 -15.40675639289293</affine>
+            </ViewTransform>
+            <ViewTransform type="affine">
+                <Name>Translation to Nominal Grid</Name>
+                <affine>1.0
+                    0.0 0.0 -43285.6033 0.0 1.0 0.0 -5320.0 0.0 0.0 1.0 -28672.0</affine>
+            </ViewTransform>
+        </ViewRegistration>
+        <ViewRegistration timepoint="0" setup="12">
+            <ViewTransform type="affine">
+                <Name>
+                    InterpolatedAffineModel3D</Name>
+                <affine>0.9997434732560093 -7.109368512940097E-5
+                    -9.240150441785079E-4 -33.95665419691327 -9.00574898144275E-4 0.9970149691036045
+                    3.0100958597887398E-5 -80.03087842289327 0.001074084628337248
+                    2.827125832254029E-4
+                    0.9979746169336424 -0.15794076562087866</affine>
+            </ViewTransform>
+            <ViewTransform
+                type="affine">
+                <Name>TranslationModel3D</Name>
+                <affine>1.0 0.0 0.0
+                    122.59879319259926 0.0 1.0 0.0 86.19636278181133 0.0 0.0 1.0 -42.77604116112343</affine>
+            </ViewTransform>
+            <ViewTransform type="affine">
+                <Name>Translation to Nominal Grid</Name>
+                <affine>1.0
+                    0.0 0.0 -55348.8039 0.0 1.0 0.0 -23408.0003 0.0 0.0 1.0 -28672.0</affine>
+            </ViewTransform>
+        </ViewRegistration>
+        <ViewRegistration timepoint="0" setup="13">
+            <ViewTransform
+                type="affine">
+                <Name>InterpolatedAffineModel3D</Name>
+                <affine>0.9999161897236559
+                    4.32313372224918E-4 -8.692790759469558E-4 -18.401952366946094
+                    -0.001324895613581601
+                    0.9969375980987359 3.9138178499655495E-4 -85.81718475884753 0.001090270524348859
+                    7.983818434535409E-4 0.9973191517115036 -4.172588080158493</affine>
+            </ViewTransform>
+            <ViewTransform
+                type="affine">
+                <Name>TranslationModel3D</Name>
+                <affine>1.0 0.0 0.0
+                    146.5101457270648 0.0 1.0 0.0 31.850125231272614 0.0 0.0 1.0 -44.64462248037489</affine>
+            </ViewTransform>
+            <ViewTransform type="affine">
+                <Name>Translation to Nominal Grid</Name>
+                <affine>1.0
+                    0.0 0.0 -55348.8039 0.0 1.0 0.0 -14363.9998 0.0 0.0 1.0 -28672.0</affine>
+            </ViewTransform>
+        </ViewRegistration>
+        <ViewRegistration timepoint="0" setup="14">
+            <ViewTransform
+                type="affine">
+                <Name>InterpolatedAffineModel3D</Name>
+                <affine>1.0000609446799495
+                    3.770367596786374E-4 -7.0218339539935E-4 -9.036147630656679
+                    -0.001270326283868832
+                    0.9971756564601553 6.148781908162586E-4 -78.45954967841749 0.0011347096056824847
+                    0.002460459215099542 0.9974004051570169 7.062494371075809</affine>
+            </ViewTransform>
+            <ViewTransform
+                type="affine">
+                <Name>TranslationModel3D</Name>
+                <affine>1.0 0.0 0.0
+                    172.04786803000025 0.0 1.0 0.0 -7.908298569341241 0.0 0.0 1.0
+                    -46.765577075231704</affine>
+            </ViewTransform>
+            <ViewTransform type="affine">
+                <Name>Translation to Nominal Grid</Name>
+                <affine>1.0
+                    0.0 0.0 -55348.8039 0.0 1.0 0.0 -5320.0 0.0 0.0 1.0 -28672.0</affine>
+            </ViewTransform>
+        </ViewRegistration>
+    </ViewRegistrations>
+    <ViewInterestPoints>
+        <ViewInterestPointsFile timepoint="0"
+            setup="0" label="beads"
+            params="DOG (Spark) s=1.8 t=0.003 overlappingOnly=true min=false max=true downsampleXY=8 downsampleZ=8 minIntensity=0.0 maxIntensity=20000.0">
+            tpId_0_viewSetupId_0/beads</ViewInterestPointsFile>
+        <ViewInterestPointsFile timepoint="0"
+            setup="1" label="beads"
+            params="DOG (Spark) s=1.8 t=0.003 overlappingOnly=true min=false max=true downsampleXY=8 downsampleZ=8 minIntensity=0.0 maxIntensity=20000.0">
+            tpId_0_viewSetupId_1/beads</ViewInterestPointsFile>
+        <ViewInterestPointsFile timepoint="0"
+            setup="2" label="beads"
+            params="DOG (Spark) s=1.8 t=0.003 overlappingOnly=true min=false max=true downsampleXY=8 downsampleZ=8 minIntensity=0.0 maxIntensity=20000.0">
+            tpId_0_viewSetupId_2/beads</ViewInterestPointsFile>
+        <ViewInterestPointsFile timepoint="0"
+            setup="3" label="beads"
+            params="DOG (Spark) s=1.8 t=0.003 overlappingOnly=true min=false max=true downsampleXY=8 downsampleZ=8 minIntensity=0.0 maxIntensity=20000.0">
+            tpId_0_viewSetupId_3/beads</ViewInterestPointsFile>
+        <ViewInterestPointsFile timepoint="0"
+            setup="4" label="beads"
+            params="DOG (Spark) s=1.8 t=0.003 overlappingOnly=true min=false max=true downsampleXY=8 downsampleZ=8 minIntensity=0.0 maxIntensity=20000.0">
+            tpId_0_viewSetupId_4/beads</ViewInterestPointsFile>
+        <ViewInterestPointsFile timepoint="0"
+            setup="5" label="beads"
+            params="DOG (Spark) s=1.8 t=0.003 overlappingOnly=true min=false max=true downsampleXY=8 downsampleZ=8 minIntensity=0.0 maxIntensity=20000.0">
+            tpId_0_viewSetupId_5/beads</ViewInterestPointsFile>
+        <ViewInterestPointsFile timepoint="0"
+            setup="6" label="beads"
+            params="DOG (Spark) s=1.8 t=0.003 overlappingOnly=true min=false max=true downsampleXY=8 downsampleZ=8 minIntensity=0.0 maxIntensity=20000.0">
+            tpId_0_viewSetupId_6/beads</ViewInterestPointsFile>
+        <ViewInterestPointsFile timepoint="0"
+            setup="7" label="beads"
+            params="DOG (Spark) s=1.8 t=0.003 overlappingOnly=true min=false max=true downsampleXY=8 downsampleZ=8 minIntensity=0.0 maxIntensity=20000.0">
+            tpId_0_viewSetupId_7/beads</ViewInterestPointsFile>
+        <ViewInterestPointsFile timepoint="0"
+            setup="8" label="beads"
+            params="DOG (Spark) s=1.8 t=0.003 overlappingOnly=true min=false max=true downsampleXY=8 downsampleZ=8 minIntensity=0.0 maxIntensity=20000.0">
+            tpId_0_viewSetupId_8/beads</ViewInterestPointsFile>
+        <ViewInterestPointsFile timepoint="0"
+            setup="9" label="beads"
+            params="DOG (Spark) s=1.8 t=0.003 overlappingOnly=true min=false max=true downsampleXY=8 downsampleZ=8 minIntensity=0.0 maxIntensity=20000.0">
+            tpId_0_viewSetupId_9/beads</ViewInterestPointsFile>
+        <ViewInterestPointsFile timepoint="0"
+            setup="10" label="beads"
+            params="DOG (Spark) s=1.8 t=0.003 overlappingOnly=true min=false max=true downsampleXY=8 downsampleZ=8 minIntensity=0.0 maxIntensity=20000.0">
+            tpId_0_viewSetupId_10/beads</ViewInterestPointsFile>
+        <ViewInterestPointsFile timepoint="0"
+            setup="11" label="beads"
+            params="DOG (Spark) s=1.8 t=0.003 overlappingOnly=true min=false max=true downsampleXY=8 downsampleZ=8 minIntensity=0.0 maxIntensity=20000.0">
+            tpId_0_viewSetupId_11/beads</ViewInterestPointsFile>
+        <ViewInterestPointsFile timepoint="0"
+            setup="12" label="beads"
+            params="DOG (Spark) s=1.8 t=0.003 overlappingOnly=true min=false max=true downsampleXY=8 downsampleZ=8 minIntensity=0.0 maxIntensity=20000.0">
+            tpId_0_viewSetupId_12/beads</ViewInterestPointsFile>
+        <ViewInterestPointsFile timepoint="0"
+            setup="13" label="beads"
+            params="DOG (Spark) s=1.8 t=0.003 overlappingOnly=true min=false max=true downsampleXY=8 downsampleZ=8 minIntensity=0.0 maxIntensity=20000.0">
+            tpId_0_viewSetupId_13/beads</ViewInterestPointsFile>
+        <ViewInterestPointsFile timepoint="0"
+            setup="14" label="beads"
+            params="DOG (Spark) s=1.8 t=0.003 overlappingOnly=true min=false max=true downsampleXY=8 downsampleZ=8 minIntensity=0.0 maxIntensity=20000.0">
+            tpId_0_viewSetupId_14/beads</ViewInterestPointsFile>
+    </ViewInterestPoints>
+    <BoundingBoxes />
+    <PointSpreadFunctions />
+    <StitchingResults />
+    <IntensityAdjustments />
+</SpimData>'
