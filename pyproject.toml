@@ -24,7 +24,15 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: CPython",
   "Programming Language :: Python :: Implementation :: PyPy",
 ]
-dependencies = ["zarr", "tensorstore", "fsspec[s3]", "neuroglancer", "pydantic-bigstitcher", "pydantic-zarr"]
+dependencies = [
+  "zarr", 
+  "tensorstore", 
+  "fsspec[s3]", 
+  "neuroglancer", 
+  "pydantic-bigstitcher==0.0.3", 
+  "pydantic-zarr",
+  "pydantic-ome-ngff",
+  ]
 
 [project.urls]
 Documentation = "https://github.com/unknown/correspondence-viz#readme"
