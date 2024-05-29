@@ -1,4 +1,4 @@
-# correspondence-viz
+# match-viz
 
 [![PyPI - Version](https://img.shields.io/pypi/v/correspondence-viz.svg)](https://pypi.org/project/correspondence-viz)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/correspondence-viz.svg)](https://pypi.org/project/correspondence-viz)
