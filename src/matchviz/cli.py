@@ -10,7 +10,8 @@ def cli():
 @click.argument('url', type=click.STRING)
 @click.argument('dest', type=click.STRING)
 @click.option('--ngjson', type=click.STRING)
-def save_interest_points_cli(url: str, dest: str, ngjson: str | None):
+@click.option('--nghost', type=click.STRING)
+def save_interest_points_cli(url: str, dest: str, ngjson: str | None, nghost: str | None):
     
     bs_model = parse_bigstitcher_xml_from_s3(url)
     save_interest_points(bs_model=bs_model, base_url=url, out_prefix=dest)
@@ -19,7 +20,8 @@ def save_interest_points_cli(url: str, dest: str, ngjson: str | None):
         tilegroup_s3_url = get_tilegroup_s3_url(bs_model)
         state = create_neuroglancer_state(
             image_url=tilegroup_s3_url,
-            points_url=dest)
+            points_host = nghost,
+            points_path=dest)
         
         with open(ngjson, mode='w') as fh:
             fh.write(json.dumps(state.to_json()))

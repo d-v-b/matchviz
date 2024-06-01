@@ -13,7 +13,7 @@ from pydantic_zarr.v2 import GroupSpec, ArraySpec
 from pydantic_bigstitcher import SpimData2
 from pydantic_ome_ngff.v04.multiscale import MultiscaleMetadata
 from s3fs import S3FileSystem
-
+import re
 from typing_extensions import TypedDict
 from neuroglancer.write_annotations import AnnotationWriter
 
@@ -21,20 +21,26 @@ def write_point_annotations(
     path: str,
     points: np.ndarray,
     coordinate_space: neuroglancer.CoordinateSpace,
-    rgba: tuple[int, int, int, int] = (255, 255, 255, 255),
-):
+    rgba: tuple[int, int, int, int] = (127, 255, 127, 255),
+) -> None:
     writer = AnnotationWriter(
         coordinate_space=coordinate_space,
         annotation_type="point",
         properties=[
             neuroglancer.AnnotationPropertySpec(id="size", type="float32"),
-            neuroglancer.AnnotationPropertySpec(id="cell_type", type="uint16"),
             neuroglancer.AnnotationPropertySpec(id="point_color", type="rgba"),
         ],
     )
 
-    [writer.add_point(c, size=10, cell_type=16, point_color=rgba) for c in points]
+    [writer.add_point(c, size=10, point_color=rgba) for c in points]
     writer.write(path)
+
+def write_line_annotations(
+        path: str,
+        lines: np.ndarray,
+        coordinate_space: neuroglancer.CoordinateSpace,
+        rgba: tuple[int, int, int, int] = (127,255,127,255)) -> None:
+    ...
 
 def parse_idmap(data: dict[str, int]) -> dict[tuple[int, int, str], int]:
     """
@@ -68,7 +74,7 @@ class TileCoordinate(TypedDict):
     z: int
     ch: Literal['488', '561']
 
-def resolve_image_path(coord: TileCoordinate) -> str:
+def tile_coord_to_image_name(coord: TileCoordinate) -> str:
     """
     {'x': 0, 'y': 0, 'ch': 561'} -> "tile_x_0000_y_0002_z_0000_ch_488.zarr/"
     """
@@ -77,6 +83,21 @@ def resolve_image_path(coord: TileCoordinate) -> str:
     cz = coord["z"]
     cch = coord['ch']
     return f'tile_x_{cx:04}_y_{cy:04}_z_{cz:04}_ch_{cch}'
+
+def image_name_to_tile_coord(image_name: str) -> TileCoordinate:
+    coords: TileCoordinate = {}
+    for index_str in ('x', 'y', 'z', 'ch'):    
+        prefix = f'_{index_str}_'
+        matcher = re.compile(f'{prefix}[0-9]*')
+        matches = matcher.findall(image_name)
+        if len(matches) > 1:
+            raise ValueError(f'Too many matches! The string {image_name} is ambiguous.')
+        substr = matches[0][len(prefix):]
+        if index_str == 'ch':
+            coords[index_str] = substr
+        else:
+            coords[index_str] = int(substr)
+    return coords
 
 class PointsGroup(GroupSpec[InterestPointsGroupMeta, InterestPointsMembers]):
     members: InterestPointsMembers
@@ -103,12 +124,15 @@ def save_interest_points(bs_model: SpimData2, base_url: str, out_prefix: str):
     for file in bs_model.view_interest_points.data:
         setup_id = file.setup
         tile_name = view_setup_dict[setup_id].name
+        alignment_url = os.path.join(base_url, 'interestpoints.n5', file.path)
+        image_url = os.path.join( 
+                tilegroup_url, 
+                f'{tile_name}.zarr')
+
         save_points_tile(
             tile_name=tile_name,
-            image_url=os.path.join( 
-                tilegroup_url, 
-                f'{tile_name}.zarr'),
-            alignment_url=os.path.join(base_url, 'interestpoints.n5', file.path),
+            image_url=image_url,
+            alignment_url=alignment_url,
             out_prefix=out_prefix
             )
 
@@ -154,8 +178,8 @@ def create_neuroglancer_state(
     scales=[100,] * 3, 
     units=['nm',] * 3)
     state = ViewerState(dimensions=space)
-    shader_controls = {'normalized': {'range': [0, 255], "window": [0, 255]}}
-    
+    image_shader_controls = {'normalized': {'range': [0, 255], "window": [0, 255]}}
+    annotation_shader = r'void main(){setPointMarkerSize(prop_size()); setColor(prop_point_color());}'
     for name, sub_group in filter(lambda kv: f'ch_{wavelength}' in kv[0], image_group.groups()):
         image_sources[name] = f'zarr://{get_url(sub_group)}'
         points_fname = name.removesuffix('.zarr') + '.precomputed'
@@ -168,18 +192,18 @@ def create_neuroglancer_state(
                 name=name, 
                 layer=ImageLayer(
                     source=im_source,
-                    shaderControls=shader_controls
+                    shaderControls=image_shader_controls
                 ))
-            state.layers.append(name=name, layer=AnnotationLayer(source=point_source))
+            state.layers.append(name=name, layer=AnnotationLayer(source=point_source, shader=annotation_shader))
     else:
         state.layers.append(
             name="images", 
             layer=ImageLayer(
                 source=list(image_sources.values()),
-                shader_controls=shader_controls))
+                shader_controls=image_shader_controls))
         state.layers.append(
             name="points",
-            layer=AnnotationLayer(source=list(points_sources.values())))
+            layer=AnnotationLayer(source=list(points_sources.values()), shader=annotation_shader))
 
     return state
 
@@ -191,6 +215,8 @@ def save_points_tile(
     """
     e.g. dataset = 'exaSPIM_3163606_2023-11-17_12-54-51'
         alignment_id = 'alignment_2024-01-09_05-00-44'
+
+    N5 is organized according to the structure defined here: https://github.com/PreibischLab/multiview-reconstruction/blob/a566bf4d6d35a7ab00d976a8bf46f1615b34b2d0/src/main/java/net/preibisch/mvrecon/fiji/spimdata/interestpoints/InterestPointsN5.java#L54
     """
     multi_meta = MultiscaleMetadata(**zarr.open(image_url).attrs.asdict()['multiscales'][0])
     scale = multi_meta.datasets[0].coordinateTransformations[0].scale
@@ -206,13 +232,13 @@ def save_points_tile(
         store=alignment_store, 
         path='interestpoints', 
         mode='r')
-    # point_ids = np.array(points['id'])
+
     point_loc_stored = points['loc']
     # points are saved as x, y, z triplets
     point_loc = np.zeros((point_loc_stored.shape[0], point_loc_stored.shape[1] + 1), dtype=point_loc_stored.dtype)
     point_loc[:,:-1] = point_loc_stored[:] 
 
-    # apply base scaling and translation
+    # apply base translation, scaling will be handled by the coordinate space of the layer
     for idx, dim in enumerate(('x','y','z')):
         local_scale = base_coords[dim]['scale']
         local_trans = base_coords[dim]['translation']
@@ -225,9 +251,29 @@ def save_points_tile(
         scales=annotation_scales,
         units=annotation_units
         )
-
+    point_color = tile_coordinate_to_rgba(image_name_to_tile_coord(tile_name))
     write_point_annotations(
         f'{out_prefix}/{tile_name}.precomputed', 
         points = point_loc,
         coordinate_space=annotation_space, 
-        rgba=(0, 255, 255, 255))
+        rgba=point_color)
+
+def tile_coordinate_to_rgba(coord: TileCoordinate) -> tuple[int, int, int, int]:
+    """
+    generate an RGBA value from a tile coordinate
+    """
+    mod_map = {}
+    for key in ('x','y','z'):
+        mod_map[key] = coord[key] % 2
+    lut = {
+        (0, 0, 0) : ((255,0,0,255)),
+        (1, 0, 0) : ((0,255,0,255)),
+        (0, 1, 0) : ((0,0,255,255)),
+        (1, 1, 0) : ((255,255,0,255)),
+        (0, 0, 1) : ((0,255,255,255)),
+        (1, 0, 1) : ((191,191,191,255)),
+        (0, 1, 1) : ((0,128,128,255)),
+        (1, 1, 1) : ((128,128,0,255)),
+        }
+    
+    return lut[tuple(mod_map.values())]
