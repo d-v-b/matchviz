@@ -1,4 +1,4 @@
-from correspondence_viz import create_neuroglancer_state, save_points_tile, save_interest_points
+from matchviz import create_neuroglancer_state, save_points_tile, save_interest_points
 import pytest
 
 @pytest.mark.skip
@@ -10,7 +10,6 @@ def test_create_neuroglancer_state():
     points_url = 'http://localhost:3000/foo'
     image_url = 's3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38/SPIM.ome.zarr/'
     state = create_neuroglancer_state(image_url=image_url, points_url=points_url)
-    assert False
 
 @pytest.mark.skip
 def test_viz(tmpdir):

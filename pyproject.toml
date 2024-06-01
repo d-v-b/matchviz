@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "correspondence-viz"
+name = "matchviz"
 dynamic = ["version"]
 description = ''
 readme = "README.md"
@@ -25,22 +25,23 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dependencies = [
-  "zarr", 
-  "tensorstore", 
-  "fsspec[s3]", 
-  "neuroglancer", 
+  "zarr==2.18", 
+  "tensorstore==0.1.60", 
+  "fsspec[s3]==2024.3.1", 
+  "neuroglancer==2.39.2", 
   "pydantic-bigstitcher==0.0.5", 
-  "pydantic-zarr",
-  "pydantic-ome-ngff",
+  "pydantic-zarr==0.7.0",
+  "pydantic-ome-ngff==0.5.0",
+  "click==8.1.7"
   ]
 
 [project.urls]
-Documentation = "https://github.com/unknown/correspondence-viz#readme"
-Issues = "https://github.com/unknown/correspondence-viz/issues"
-Source = "https://github.com/unknown/correspondence-viz"
+Documentation = "https://github.com/unknown/matchviz#readme"
+Issues = "https://github.com/unknown/matchviz/issues"
+Source = "https://github.com/unknown/matchviz"
 
 [tool.hatch.version]
-path = "src/correspondence_viz/__about__.py"
+path = "src/matchviz/__about__.py"
 
 [tool.hatch.envs.default]
 dependencies = [
@@ -67,19 +68,19 @@ dependencies = [
   "mypy>=1.0.0",
 ]
 [tool.hatch.envs.types.scripts]
-check = "mypy --install-types --non-interactive {args:src/correspondence_viz tests}"
+check = "mypy --install-types --non-interactive {args:src/matchviz tests}"
 
 [tool.coverage.run]
-source_pkgs = ["correspondence_viz", "tests"]
+source_pkgs = ["matchviz", "tests"]
 branch = true
 parallel = true
 omit = [
-  "src/correspondence_viz/__about__.py",
+  "src/matchviz/__about__.py",
 ]
 
 [tool.coverage.paths]
-correspondence_viz = ["src/correspondence_viz", "*/correspondence-viz/src/correspondence_viz"]
-tests = ["tests", "*/correspondence-viz/tests"]
+matchviz = ["src/matchviz", "*/matchviz/src/matchviz"]
+tests = ["tests", "*/matchviz/tests"]
 
 [tool.coverage.report]
 exclude_lines = [
@@ -87,3 +88,6 @@ exclude_lines = [
   "if __name__ == .__main__.:",
   "if TYPE_CHECKING:",
 ]
+
+[project.scripts]
+matchviz = "matchviz.cli:cli"

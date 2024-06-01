@@ -1,7 +1,7 @@
-# correspondence-viz
+# matchviz
 
-[![PyPI - Version](https://img.shields.io/pypi/v/correspondence-viz.svg)](https://pypi.org/project/correspondence-viz)
-[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/correspondence-viz.svg)](https://pypi.org/project/correspondence-viz)
+[![PyPI - Version](https://img.shields.io/pypi/v/matchviz.svg)](https://pypi.org/project/matchviz)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/matchviz.svg)](https://pypi.org/project/matchviz)
 
 -----
 
@@ -13,9 +13,9 @@
 ## Installation
 
 ```console
-pip install correspondence-viz
+pip install matchviz
 ```
 
 ## License
 
-`correspondence-viz` is distributed under the terms of the [MIT](https://spdx.org/licenses/MIT.html) license.
+`matchviz` is distributed under the terms of the [MIT](https://spdx.org/licenses/MIT.html) license.

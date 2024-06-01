@@ -84,14 +84,20 @@ class PointsGroup(GroupSpec[InterestPointsGroupMeta, InterestPointsMembers]):
 
 from pydantic_bigstitcher import ViewSetup
 
-def save_interest_points(base_url: str, out_prefix: str):
+def parse_bigstitcher_xml_from_s3(base_url: str) -> SpimData2:
     xml_url = os.path.join(base_url, 'bigstitcher.xml')
     bs_xml = S3FileSystem(anon=True).cat_file(xml_url)
     bs_model = SpimData2.from_xml(bs_xml)
-    bucket = bs_model.sequence_description.image_loader.s3bucket
-    image_root_url = bs_model.sequence_description.image_loader.zarr.path
+    return bs_model
 
-    store = zarr.N5FSStore(os.path.join(base_url, 'interestpoints.n5/'), anon=True)
+def get_tilegroup_s3_url(model: SpimData2) -> str:
+    bucket = model.sequence_description.image_loader.s3bucket
+    image_root_url = model.sequence_description.image_loader.zarr.path
+    return os.path.join(f's3://{bucket}', image_root_url)
+
+def save_interest_points(bs_model: SpimData2, base_url: str, out_prefix: str):
+    tilegroup_url = get_tilegroup_s3_url(bs_model)
+
     view_setup_dict: dict[str, ViewSetup] = {v.ident: v for v in bs_model.sequence_description.view_setups.view_setup}
 
     for file in bs_model.view_interest_points.data:
@@ -99,9 +105,8 @@ def save_interest_points(base_url: str, out_prefix: str):
         tile_name = view_setup_dict[setup_id].name
         save_points_tile(
             tile_name=tile_name,
-            image_url=os.path.join(
-                f's3://{bucket}', 
-                image_root_url, 
+            image_url=os.path.join( 
+                tilegroup_url, 
                 f'{tile_name}.zarr'),
             alignment_url=os.path.join(base_url, 'interestpoints.n5', file.path),
             out_prefix=out_prefix
@@ -134,7 +139,8 @@ def get_url(node: zarr.Group | zarr.Array) -> str:
 
 def create_neuroglancer_state(
                     image_url: str,
-                    points_url: str,
+                    points_host: str,
+                    points_path: str,
                     layer_per_tile: bool = False,
                     wavelength: str = '488'
                     ):
@@ -153,7 +159,7 @@ def create_neuroglancer_state(
     for name, sub_group in filter(lambda kv: f'ch_{wavelength}' in kv[0], image_group.groups()):
         image_sources[name] = f'zarr://{get_url(sub_group)}'
         points_fname = name.removesuffix('.zarr') + '.precomputed'
-        points_sources[name] = f'precomputed://{points_url}/{points_fname}'
+        points_sources[name] = os.path.join(f'precomputed://{points_host}', points_path, points_fname)
 
     if layer_per_tile:
         for name, im_source in image_sources:
