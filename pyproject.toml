@@ -32,7 +32,8 @@ dependencies = [
   "pydantic-bigstitcher==0.0.5", 
   "pydantic-zarr==0.7.0",
   "pydantic-ome-ngff==0.5.0",
-  "click==8.1.7"
+  "click==8.1.7",
+  "polars==0.20"
   ]
 
 [project.urls]
