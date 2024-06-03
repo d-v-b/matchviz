@@ -26,7 +26,7 @@ def test_save_points_tile():
     bs_model = parse_bigstitcher_xml_from_s3(bs_url)
     tile_name = 'tile_x_0000_y_0000_z_0000_ch_488'
     alignment_url = 's3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/interestpoints.n5/tpId_0_viewSetupId_0/'
-    out_prefix = 'points'
+    out_prefix = 'points_out'
     tile_coords = get_tile_coords(bs_model)
     save_points_tile(vs_id = 0, tile_name=tile_name, alignment_url=alignment_url, out_prefix=out_prefix, tile_coords=tile_coords)
 

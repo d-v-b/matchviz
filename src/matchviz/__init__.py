@@ -167,11 +167,12 @@ def load_points(
     intensity = interest_points_group['intensities'][:]
     
     idmap_parsed = parse_idmap(correspondences_group.attrs['idMap'])
+    # map from pair index to image id
+    remap = {value: key[1] for key, value in idmap_parsed.items()}
     # matches are saved as [num_matches, [point_self, point_other, match_id]]
     matches = correspondences_group['data'][:]
     # replace the pair id value with an actual image index reference in the last column
-    for key, value in idmap_parsed.items():
-        matches[:, -1][matches[:,-1] == value] = key[1]
+    matches[:, -1] = np.vectorize(remap.get)(matches[:, -1])
 
     return pl.DataFrame({'id': ids, 'loc_xyz': loc, 'intensity': intensity}), pl.DataFrame({'point_self': matches[:,0], 'point_other': matches[:, 1], 'id_other': matches[:,2]})
 
@@ -254,7 +255,7 @@ def create_neuroglancer_state(
     units=['nm',] * 3)
     state = ViewerState(dimensions=space)
     image_shader_controls = {'normalized': {'range': [0, 255], "window": [0, 255]}}
-    annotation_shader = r'void main(){setPointMarkerSize(prop_size()); setColor(prop_point_color());}'
+    annotation_shader = r'void main(){setColor(prop_point_color());}'
     for name, sub_group in filter(lambda kv: f'ch_{wavelength}' in kv[0], image_group.groups()):
         image_sources[name] = f'zarr://{get_url(sub_group)}'
         points_fname = name.removesuffix('.zarr') + '.precomputed'
@@ -296,7 +297,8 @@ def save_points_tile(
     """
 
     # base_coords = tile_coords[vs_id]
-
+    # remove trailing slash
+    alignment_url = alignment_url.rstrip('/')
     alignment_store = zarr.N5FSStore(alignment_url)
     base_coords = tile_coords[vs_id]
     match_group = zarr.open_group(
@@ -337,15 +339,10 @@ def save_points_tile(
     
     point_color = tile_coordinate_to_rgba(image_name_to_tile_coord(tile_name))
 
-    # write_point_annotations(
-    #     f'{out_prefix}/{tile_name}.precomputed', 
-    #     points = point_loc,
-    #     coordinate_space=annotation_space, 
-    #     rgba=point_color)
-
     line_starts = []
     line_stops = []
     point_map_self = points_map[vs_id]
+
     for row in matches_map[vs_id].rows():
 
         point_self, point_other, id_other = row
@@ -358,8 +355,8 @@ def save_points_tile(
             line_stop = line_start
         # add the fake time coordinate
         line_starts.append(line_start)
-        line_stops.append(line_start)
-
+        line_stops.append(line_stop)
+    
     lines_loc = tuple(zip(*(line_starts, line_stops)))
     write_line_annotations(
         f'{out_prefix}/{tile_name}.precomputed',
