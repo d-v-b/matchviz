@@ -26,6 +26,7 @@ def save_interest_points_cli(url: str, dest: str, ngjson: str | None, nghost: st
         with open(ngjson, mode='w') as fh:
             fh.write(json.dumps(state.to_json()))
 
+
 @cli.command('ngjson')
 @click.argument('url', type=click.STRING)
 @click.argument('dest', type=click.STRING)

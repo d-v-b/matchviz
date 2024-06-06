@@ -2,7 +2,8 @@
 #
 # SPDX-License-Identifier: MIT
 from __future__ import annotations
-from typing import Annotated, Any, Literal, Sequence
+from dataclasses import dataclass
+from typing import Annotated, Any, Iterable, Literal, Sequence
 import neuroglancer.coordinate_space
 import numpy as np
 import zarr
@@ -16,6 +17,19 @@ from s3fs import S3FileSystem
 import re
 from typing_extensions import TypedDict
 from neuroglancer.write_annotations import AnnotationWriter
+import polars as pl
+from typing_extensions import TypedDict
+
+class Tx(TypedDict):
+    scale: float
+    trans: float
+
+class Coords(TypedDict):
+    x: Tx
+    y: Tx
+    z: Tx
+
+
 
 def write_point_annotations(
     path: str,
@@ -39,8 +53,18 @@ def write_line_annotations(
         path: str,
         lines: np.ndarray,
         coordinate_space: neuroglancer.CoordinateSpace,
-        rgba: tuple[int, int, int, int] = (127,255,127,255)) -> None:
-    ...
+        rgba: tuple[int, int, int, int] = (255,255,255,255)) -> None:
+    writer = AnnotationWriter(
+        coordinate_space=coordinate_space,
+        annotation_type="line",
+        properties=[
+            neuroglancer.AnnotationPropertySpec(id="line_color", type="rgba"),
+            neuroglancer.AnnotationPropertySpec(id="point_color", type="rgba"),
+        ],
+    )
+
+    [writer.add_line(*points, point_color=rgba, line_color=rgba) for points in lines]
+    writer.write(path)
 
 def parse_idmap(data: dict[str, int]) -> dict[tuple[int, int, str], int]:
     """
@@ -48,7 +72,7 @@ def parse_idmap(data: dict[str, int]) -> dict[tuple[int, int, str], int]:
     """
     parts = map(lambda k: k.split(','), data.keys())
     # convert first two elements to int, leave the last as str
-    parts_normalized = map(lambda v: (int(v[0], int[v[1], v[2]])), parts)
+    parts_normalized = map(lambda v: (int(v[0]), int(v[1]), v[2]), parts)
     return dict(zip(parts_normalized, data.values()))
 
 class InterestPointsGroupMeta(BaseModel):
@@ -116,24 +140,76 @@ def get_tilegroup_s3_url(model: SpimData2) -> str:
     image_root_url = model.sequence_description.image_loader.zarr.path
     return os.path.join(f's3://{bucket}', image_root_url)
 
-def save_interest_points(bs_model: SpimData2, base_url: str, out_prefix: str):
+
+def translate_points(coords: Coords, points: np.ndarray):
+    # transform one column at a time
+    for idx, dim in enumerate(('x','y','z')):
+        local_scale = coords[dim]['scale']
+        local_trans = coords[dim]['translation']
+        points[:, idx] += local_trans / local_scale
+
+def load_points(
+        interest_points_url: str, 
+        coords: Coords | None) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """
+    e.g. interestpoints.n5/tpId_0_viewSetupId_3/beads
+    """
+    store = zarr.N5FSStore(interest_points_url, mode='r')
+    interest_points_group = zarr.open_group(store=store, path='interestpoints', mode='r')
+    correspondences_group = zarr.open_group(store=store, path='correspondences', mode='r')
+    # points are saved as [num_points, [x, y, z]]
+    loc = interest_points_group['loc'][:]
+
+    if coords is not None:
+        translate_points(coords, loc)
+
+    ids = interest_points_group['id'][:]
+    intensity = interest_points_group['intensities'][:]
+    
+    idmap_parsed = parse_idmap(correspondences_group.attrs['idMap'])
+    # map from pair index to image id
+    remap = {value: key[1] for key, value in idmap_parsed.items()}
+    # matches are saved as [num_matches, [point_self, point_other, match_id]]
+    matches = correspondences_group['data'][:]
+    # replace the pair id value with an actual image index reference in the last column
+    matches[:, -1] = np.vectorize(remap.get)(matches[:, -1])
+
+    return pl.DataFrame({'id': ids, 'loc_xyz': loc, 'intensity': intensity}), pl.DataFrame({'point_self': matches[:,0], 'point_other': matches[:, 1], 'id_other': matches[:,2]})
+
+def get_tile_coords(bs_model: SpimData2):
+    tile_coords: dict[int, Coords] = {}
     tilegroup_url = get_tilegroup_s3_url(bs_model)
-
     view_setup_dict: dict[str, ViewSetup] = {v.ident: v for v in bs_model.sequence_description.view_setups.view_setup}
-
     for file in bs_model.view_interest_points.data:
         setup_id = file.setup
         tile_name = view_setup_dict[setup_id].name
-        alignment_url = os.path.join(base_url, 'interestpoints.n5', file.path)
         image_url = os.path.join( 
                 tilegroup_url, 
                 f'{tile_name}.zarr')
+        multi_meta = MultiscaleMetadata(**zarr.open(image_url).attrs.asdict()['multiscales'][0])
+        scale = multi_meta.datasets[0].coordinateTransformations[0].scale
+        trans = multi_meta.datasets[0].coordinateTransformations[1].translation
+        tile_coords[int(setup_id)] = {axis.name: {'scale': s, 'translation': t} for axis, s, t in zip(multi_meta.axes, scale, trans)}
+    return tile_coords
+
+def save_interest_points(bs_model: SpimData2, base_url: str, out_prefix: str):
+    tilegroup_url = get_tilegroup_s3_url(bs_model)
+
+    view_setup_dict: dict[int, ViewSetup] = {int(v.ident): v for v in bs_model.sequence_description.view_setups.view_setup}
+    # generate a coordinate grid for all the images
+    tile_coords: dict[int, Coords] = get_tile_coords(bs_model=bs_model)
+
+    for file in bs_model.view_interest_points.data:
+        setup_id = int(file.setup)
+        tile_name = view_setup_dict[setup_id].name
+        alignment_url = os.path.join(base_url, 'interestpoints.n5', file.path.split('/')[0])
 
         save_points_tile(
+            vs_id=setup_id,
             tile_name=tile_name,
-            image_url=image_url,
             alignment_url=alignment_url,
-            out_prefix=out_prefix
+            out_prefix=out_prefix,
+            tile_coords=tile_coords,
             )
 
 
@@ -179,7 +255,7 @@ def create_neuroglancer_state(
     units=['nm',] * 3)
     state = ViewerState(dimensions=space)
     image_shader_controls = {'normalized': {'range': [0, 255], "window": [0, 255]}}
-    annotation_shader = r'void main(){setPointMarkerSize(prop_size()); setColor(prop_point_color());}'
+    annotation_shader = r'void main(){setColor(prop_point_color());}'
     for name, sub_group in filter(lambda kv: f'ch_{wavelength}' in kv[0], image_group.groups()):
         image_sources[name] = f'zarr://{get_url(sub_group)}'
         points_fname = name.removesuffix('.zarr') + '.precomputed'
@@ -208,42 +284,51 @@ def create_neuroglancer_state(
     return state
 
 def save_points_tile(
+        vs_id: int, 
         tile_name: str,
-        image_url: str,
         alignment_url: str,
-        out_prefix: str,):
+        out_prefix: str,
+        tile_coords: dict[str, Coords]):
     """
     e.g. dataset = 'exaSPIM_3163606_2023-11-17_12-54-51'
         alignment_id = 'alignment_2024-01-09_05-00-44'
 
     N5 is organized according to the structure defined here: https://github.com/PreibischLab/multiview-reconstruction/blob/a566bf4d6d35a7ab00d976a8bf46f1615b34b2d0/src/main/java/net/preibisch/mvrecon/fiji/spimdata/interestpoints/InterestPointsN5.java#L54
     """
-    multi_meta = MultiscaleMetadata(**zarr.open(image_url).attrs.asdict()['multiscales'][0])
-    scale = multi_meta.datasets[0].coordinateTransformations[0].scale
-    trans = multi_meta.datasets[0].coordinateTransformations[1].translation
-    base_coords = {axis.name: {'scale': s, 'translation': t} for axis, s, t in zip(multi_meta.axes, scale, trans)}
+
+    # base_coords = tile_coords[vs_id]
+    # remove trailing slash
+    alignment_url = alignment_url.rstrip('/')
     alignment_store = zarr.N5FSStore(alignment_url)
-
-    matches = zarr.open_group(
+    base_coords = tile_coords[vs_id]
+    match_group = zarr.open_group(
         store=alignment_store, 
-        path='correspondences', 
-        mode='r')
-    points = zarr.open_group(
-        store=alignment_store, 
-        path='interestpoints', 
+        path='beads/correspondences', 
         mode='r')
 
-    point_loc_stored = points['loc']
-    # points are saved as x, y, z triplets
-    point_loc = np.zeros((point_loc_stored.shape[0], point_loc_stored.shape[1] + 1), dtype=point_loc_stored.dtype)
-    point_loc[:,:-1] = point_loc_stored[:] 
-
-    # apply base translation, scaling will be handled by the coordinate space of the layer
-    for idx, dim in enumerate(('x','y','z')):
-        local_scale = base_coords[dim]['scale']
-        local_trans = base_coords[dim]['translation']
-        point_loc[:, idx] += local_trans / local_scale
+    id_map = parse_idmap(match_group.attrs.asdict()['idMap'])
+    # the idMap attribute uses 0 instead of the actual setup id for the self in this metadata.
+    # normalizing replaces that 0 with the actual setup id.
+    id_map_normalized = {(vs_id, *key[1:]): value for key, value in id_map.items()}
     
+    # tuple of view_setup ids to load
+    to_access = (vs_id,)
+    points_map = {}
+    matches_map = {}
+
+    for key in id_map_normalized:
+        to_access += (key[1],)
+
+    for other_id in to_access:
+        new_name = f'tpId_0_viewSetupId_{other_id}'
+        new_url = os.path.join(os.path.split(alignment_url)[0], new_name, 'beads')
+
+        points_data, match_data = load_points(
+            interest_points_url=new_url,
+            coords=tile_coords[other_id])
+        points_map[other_id] = points_data
+        matches_map[other_id] = match_data
+
     annotation_scales = [base_coords[dim]['scale'] for dim in ('x','y','z','t')]
     annotation_units = ['um', 'um', 'um', 's']
     annotation_space = neuroglancer.CoordinateSpace(
@@ -251,12 +336,34 @@ def save_points_tile(
         scales=annotation_scales,
         units=annotation_units
         )
+    
     point_color = tile_coordinate_to_rgba(image_name_to_tile_coord(tile_name))
-    write_point_annotations(
-        f'{out_prefix}/{tile_name}.precomputed', 
-        points = point_loc,
+
+    line_starts = []
+    line_stops = []
+    point_map_self = points_map[vs_id]
+
+    for row in matches_map[vs_id].rows():
+
+        point_self, point_other, id_other = row
+        line_start = point_map_self.get_column('loc_xyz')[point_self].clone().extend(pl.Series([0.0]))
+        loc_xyz_other = points_map[id_other].get_column('loc_xyz')
+        try:
+            line_stop = loc_xyz_other[point_other].clone().extend(pl.Series([0.0]))
+        except IndexError:
+            print(f'indexing error with {point_other} into vs_id {id_other}')
+            line_stop = line_start
+        # add the fake time coordinate
+        line_starts.append(line_start)
+        line_stops.append(line_stop)
+    
+    lines_loc = tuple(zip(*(line_starts, line_stops)))
+    write_line_annotations(
+        f'{out_prefix}/{tile_name}.precomputed',
+        lines = lines_loc,
         coordinate_space=annotation_space, 
-        rgba=point_color)
+        rgba=point_color
+        )
 
 def tile_coordinate_to_rgba(coord: TileCoordinate) -> tuple[int, int, int, int]:
     """
