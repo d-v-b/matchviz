@@ -1,4 +1,6 @@
 from matchviz import create_neuroglancer_state, get_tile_coords, load_points, parse_bigstitcher_xml_from_s3, parse_idmap, save_points_tile, save_interest_points, image_name_to_tile_coord
+from matchviz.annotation_writer import AnnotationWriterFSSpec
+import neuroglancer
 import pytest
 
 @pytest.mark.skip
@@ -20,7 +22,8 @@ def test_viz(tmpdir):
         dataset=dataset, 
         alignment_id=alignment_id,
         out_prefix=str(tmpdir))
-    
+
+@pytest.mark.skip
 def test_save_points_tile():
     bs_url = 's3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/'
     bs_model = parse_bigstitcher_xml_from_s3(bs_url)
@@ -46,3 +49,20 @@ def test_parse_idmap():
 def test_load_points():
     url = 's3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/interestpoints.n5/tpId_0_viewSetupId_3/beads/'
     table = load_points(url)
+
+@pytest.mark.skip
+def test_write_annotations():
+    coordinate_space = neuroglancer.CoordinateSpace(
+        names=['x','y','z'],
+        scales=[1,1,1],
+        units=['nm', 'nm', 'nm']
+        )
+    writer = AnnotationWriterFSSpec(
+        coordinate_space=coordinate_space,
+        annotation_type="point")
+    writer.add_point((0, 0,0))
+    writer.add_point((0, 0,1))
+    writer.add_point((0, 1,1))
+    writer.add_point((0, 1,0))
+    # mock s3 here
+    writer.write('')
