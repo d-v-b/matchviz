@@ -33,7 +33,8 @@ dependencies = [
   "pydantic-zarr==0.7.0",
   "pydantic-ome-ngff==0.5.0",
   "click==8.1.7",
-  "polars==0.20"
+  "polars==0.20",
+  "tqdm==4.66.4"
   ]
 
 [project.urls]
@@ -49,6 +50,7 @@ dependencies = [
   "coverage[toml]>=6.5",
   "pytest",
 ]
+
 [tool.hatch.envs.default.scripts]
 test = "pytest {args:tests}"
 test-cov = "coverage run -m pytest {args:tests}"
