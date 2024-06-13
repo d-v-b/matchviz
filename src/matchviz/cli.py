@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import os
 import json
 import click
 import fsspec
@@ -33,14 +33,16 @@ def save_points(url: str, dest: str, ngjson: str | None, nghost: str | None):
     save_interest_points(bs_model=bs_model, base_url=url, out_prefix=dest)
 
     if ngjson is not None:
+        if nghost is not None:
+            ng_url = os.path.join(nghost, ngjson)
+        else:
+            ng_url = ngjson
         tilegroup_s3_url = get_tilegroup_s3_url(bs_model)
-        state = create_neuroglancer_state(
-            image_url=tilegroup_s3_url, points_host=nghost, points_path=dest
-        )
+        state = create_neuroglancer_state(image_url=tilegroup_s3_url, points_url=ng_url)
 
-        fs, _ = fsspec.url_to_fs(dest)
+        fs, _ = fsspec.url_to_fs(ngjson)
 
-        if not dest.startswith("s3://"):
+        if not ngjson.startswith("s3://"):
             if nghost is None:
                 raise ValueError(
                     "You must provide a hostname to generate a neuroglancer viewer state if you are saving to local storage"
@@ -53,21 +55,17 @@ def save_points(url: str, dest: str, ngjson: str | None, nghost: str | None):
 @cli.command("ngjson")
 @click.argument("url", type=click.STRING)
 @click.argument("dest", type=click.STRING)
-@click.argument("points_path", type=click.STRING)
-@click.argument("points_host", type=click.STRING)
-def save_neuroglancer_json_cli(url: str, dest: str, points_path: str, points_host: str):
-    save_neuroglancer_json(
-        url=url, dest=dest, points_path=points_path, points_host=points_host
-    )
+@click.argument("points_url", type=click.STRING)
+def save_neuroglancer_json_cli(url: str, dest: str, points_url: str):
+    save_neuroglancer_json(url=url, dest=dest, points_url=points_url)
 
 
-def save_neuroglancer_json(url: str, dest: str, points_path: str, points_host: str):
+def save_neuroglancer_json(url: str, dest: str, points_url: str):
     bs_model = parse_bigstitcher_xml_from_s3(url)
     tilegroup_s3_url = get_tilegroup_s3_url(bs_model)
     state = create_neuroglancer_state(
         image_url=tilegroup_s3_url,
-        points_path=points_path,
-        points_host=points_host,
+        points_url=points_url,
     )
 
     fs, _ = fsspec.url_to_fs(dest)

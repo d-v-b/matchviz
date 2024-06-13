@@ -258,18 +258,13 @@ def get_url(node: zarr.Group | zarr.Array) -> str:
 
 def create_neuroglancer_state(
     image_url: str,
-    points_host: str | None,
-    points_path: str,
+    points_url: str,
     layer_per_tile: bool = False,
     wavelength: str = "488",
 ):
     from neuroglancer import ImageLayer, AnnotationLayer, ViewerState, CoordinateSpace
 
-    image_group = zarr.open(store=image_url, path="")
-    if points_host is None:
-        _points_host = ""
-    else:
-        _points_host = points_host
+    image_group = zarr.open_group(store=image_url, path="", mode="r")
 
     image_sources = {}
     points_sources = {}
@@ -292,9 +287,7 @@ def create_neuroglancer_state(
     ):
         image_sources[name] = f"zarr://{get_url(sub_group)}"
         points_fname = name.removesuffix(".zarr") + ".precomputed"
-        points_sources[name] = os.path.join(
-            f"precomputed://{_points_host}", points_path, points_fname
-        )
+        points_sources[name] = os.path.join(f"precomputed://{points_url}", points_fname)
 
     if layer_per_tile:
         for name, im_source in image_sources:
