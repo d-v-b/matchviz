@@ -187,7 +187,7 @@ def get_tile_coords(bs_model: SpimData2) -> dict[int, Coords]:
         tile_name = view_setup_dict[setup_id].name
         image_url = os.path.join(tilegroup_url, f"{tile_name}.zarr")
         multi_meta = MultiscaleMetadata(
-            **zarr.open(image_url).attrs.asdict()["multiscales"][0]
+            **zarr.open_group(image_url, mode="r").attrs.asdict()["multiscales"][0]
         )
         scale = multi_meta.datasets[0].coordinateTransformations[0].scale
         trans = multi_meta.datasets[0].coordinateTransformations[1].translation
