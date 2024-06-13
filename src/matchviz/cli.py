@@ -34,9 +34,9 @@ def save_points(url: str, dest: str, ngjson: str | None, nghost: str | None):
 
     if ngjson is not None:
         if nghost is not None:
-            ng_url = os.path.join(nghost, ngjson)
+            ng_url = os.path.join(nghost, dest)
         else:
-            ng_url = ngjson
+            ng_url = dest
         tilegroup_s3_url = get_tilegroup_s3_url(bs_model)
         state = create_neuroglancer_state(image_url=tilegroup_s3_url, points_url=ng_url)
 
