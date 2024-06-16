@@ -20,6 +20,7 @@ import polars as pl
 from pydantic_bigstitcher import ViewSetup
 from matchviz.annotation import write_line_annotations
 import logging
+import fsspec
 
 
 class Tx(TypedDict):
@@ -187,7 +188,7 @@ def get_tile_coords(bs_model: SpimData2) -> dict[int, Coords]:
         tile_name = view_setup_dict[setup_id].name
         image_url = os.path.join(tilegroup_url, f"{tile_name}.zarr")
         multi_meta = MultiscaleMetadata(
-            **zarr.open(image_url).attrs.asdict()["multiscales"][0]
+            **zarr.open_group(image_url, mode="r").attrs.asdict()["multiscales"][0]
         )
         scale = multi_meta.datasets[0].coordinateTransformations[0].scale
         trans = multi_meta.datasets[0].coordinateTransformations[1].translation
@@ -258,19 +259,12 @@ def get_url(node: zarr.Group | zarr.Array) -> str:
 
 def create_neuroglancer_state(
     image_url: str,
-    points_host: str | None,
-    points_path: str,
+    points_url: str,
     layer_per_tile: bool = False,
-    wavelength: str = "488",
 ):
     from neuroglancer import ImageLayer, AnnotationLayer, ViewerState, CoordinateSpace
 
-    image_group = zarr.open(store=image_url, path="")
-    if points_host is None:
-        _points_host = ""
-    else:
-        _points_host = points_host
-
+    image_group = zarr.open_group(store=image_url, path="", mode="r")
     image_sources = {}
     points_sources = {}
     space = CoordinateSpace(
@@ -284,17 +278,18 @@ def create_neuroglancer_state(
         ]
         * 3,
     )
+    points_fs, points_path = fsspec.url_to_fs(points_url)
+
     state = ViewerState(dimensions=space)
     image_shader_controls = {"normalized": {"range": [0, 255], "window": [0, 255]}}
     annotation_shader = r"void main(){setColor(prop_point_color());}"
-    for name, sub_group in filter(
-        lambda kv: f"ch_{wavelength}" in kv[0], image_group.groups()
-    ):
-        image_sources[name] = f"zarr://{get_url(sub_group)}"
-        points_fname = name.removesuffix(".zarr") + ".precomputed"
-        points_sources[name] = os.path.join(
-            f"precomputed://{_points_host}", points_path, points_fname
-        )
+
+    for name, sub_group in image_group.groups():
+        point_dir = name.removesuffix(".zarr") + ".precomputed"
+        point_url = f"{points_url}/{point_dir}"
+        if points_fs.exists(os.path.join(points_path, point_dir)):
+            image_sources[name] = f"zarr://{get_url(sub_group)}"
+            points_sources[name] = f"precomputed://{point_url}"
 
     if layer_per_tile:
         for name, im_source in image_sources:
