@@ -1,6 +1,7 @@
 
 
 def test_bulk_save():
+    import fsspec
     from s3fs import S3FileSystem
     fs = S3FileSystem()
     import os
@@ -13,9 +14,9 @@ def test_bulk_save():
 
     def skipif(url: str) -> bool:
         fs, path = fsspec.url_to_fs(url)
-        if fs.exists(os.path.join(path, out_prefix, 'neuroglancer.json')):
-            return False
-        return True
+        if not fs.exists(os.path.join(path, out_prefix, 'neuroglancer.json')):
+            return True
+        return False
 
     alignments_filtered = tuple(filter(skipif, alignments))
 
