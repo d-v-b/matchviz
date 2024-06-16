@@ -72,3 +72,37 @@ def save_neuroglancer_json(url: str, dest: str, points_url: str):
 
     with fs.open(dest, mode="w") as fh:
         fh.write(json.dumps(state.to_json()))
+
+@cli.command('html-report')
+@click.argument('dest_url', type=click.STRING)
+@click.argument('ngjson_url', type=click.STRING)
+@click.option('--title', type=click.STRING)
+def html_report(dest_url: str, ngjson_url: str, title: str | None):
+
+    if title is None:
+        title = "Neuroglancer URLs"
+    
+    description = "Neuroglancer link"
+    neuroglancer_url = f"http://neuroglancer-demo.appspot.com/#!{ngjson_url}"
+    
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>{title}</title>
+    </head>
+    <body>
+        <div>
+            <p>
+                <a href={neuroglancer_url}>{description}</a>
+            </p>
+        </div>
+    </body>
+    </html>
+    """
+
+    fs, path = fsspec.url_to_fs(dest_url)
+    with fs.open(path, mode='w') as fh:
+        fh.write(html)
+    
+    
