@@ -73,7 +73,11 @@ def save_neuroglancer_json_cli(
 
 
 def save_neuroglancer_json(
-        alignment_url: str, dest_path: str, points_url: str, style: NeuroglancerViewerStyle):
+        *,
+        alignment_url: str, 
+        points_url: str, 
+        dest_path: str, 
+        style: NeuroglancerViewerStyle):
     bs_model = parse_bigstitcher_xml_from_s3(alignment_url)
     tilegroup_s3_url = get_tilegroup_s3_url(bs_model)
     state = create_neuroglancer_state(
@@ -96,7 +100,11 @@ def save_neuroglancer_json(
 def html_report_cl(dest_url: str, ngjson_url: str, header: str | None, title: str | None):
     html_report(dest_url=dest_url, ngjson_url=ngjson_url, header=header, title=title)
 
-def html_report(dest_url: str, ngjson_url: str, header: str | None, title: str | None):
+def html_report(
+        dest_url: str, 
+        ngjson_url: str, 
+        header: str | None, 
+        title: str | None):
     if title is None:
         title = "Neuroglancer URLs"
     list_items = ()
