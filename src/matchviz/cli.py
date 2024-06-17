@@ -93,8 +93,10 @@ def save_neuroglancer_json(
 @click.argument('ngjson_url', type=click.STRING)
 @click.option('--header', type=click.STRING)
 @click.option('--title', type=click.STRING)
-def html_report(dest_url: str, ngjson_url: str, header: str | None, title: str | None):
+def html_report_cl(dest_url: str, ngjson_url: str, header: str | None, title: str | None):
+    html_report(dest_url=dest_url, ngjson_url=ngjson_url, header=header, title=title)
 
+def html_report(dest_url: str, ngjson_url: str, header: str | None, title: str | None):
     if title is None:
         title = "Neuroglancer URLs"
     list_items = ()
