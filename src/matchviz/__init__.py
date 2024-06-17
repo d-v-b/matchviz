@@ -22,7 +22,8 @@ from matchviz.annotation import write_line_annotations
 import logging
 import fsspec
 from neuroglancer import ImageLayer, AnnotationLayer, ViewerState, CoordinateSpace
-NeuroglancerViewerStyle = Literal["images_combined", "images_split"]
+
+from matchviz.neuroglancer_styles import NeuroglancerViewerStyle
 class Tx(TypedDict):
     scale: float
     trans: float
@@ -278,7 +279,7 @@ def create_neuroglancer_state(
     )
     points_fs, points_path = fsspec.url_to_fs(points_url)
 
-    state = ViewerState(dimensions=space)
+    state = ViewerState(dimensions=space, cross_section_scale=1000, projection_scale=500_000)
     image_shader_controls = {"normalized": {"range": [0, 255], "window": [0, 255]}}
     annotation_shader = r"void main(){setColor(prop_point_color());}"
 
