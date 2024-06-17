@@ -158,7 +158,7 @@ def load_points(
     # map from pair index to image id
     remap = {value: key[1] for key, value in idmap_parsed.items()}
     # matches are saved as [num_matches, [point_self, point_other, match_id]]
-    matches = correspondences_group["data"][:]
+    matches = np.array(correspondences_group["data"])
     # replace the pair id value with an actual image index reference in the last column
     matches[:, -1] = np.vectorize(remap.get)(matches[:, -1])
 
