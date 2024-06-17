@@ -136,5 +136,6 @@ def html_report(
     fs, path = fsspec.url_to_fs(dest_url)
     with fs.open(path, mode='w') as fh:
         fh.write(html)
+    fh.setxattr(content_type="text/html")
     
     
