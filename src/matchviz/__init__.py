@@ -21,8 +21,8 @@ from pydantic_bigstitcher import ViewSetup
 from matchviz.annotation import write_line_annotations
 import logging
 import fsspec
-
-
+from neuroglancer import ImageLayer, AnnotationLayer, ViewerState, CoordinateSpace
+NeuroglancerViewerStyle = Literal["images_combined", "images_split"]
 class Tx(TypedDict):
     scale: float
     trans: float
@@ -260,10 +260,8 @@ def get_url(node: zarr.Group | zarr.Array) -> str:
 def create_neuroglancer_state(
     image_url: str,
     points_url: str,
-    layer_per_tile: bool = False,
+    style: NeuroglancerViewerStyle,
 ):
-    from neuroglancer import ImageLayer, AnnotationLayer, ViewerState, CoordinateSpace
-
     image_group = zarr.open_group(store=image_url, path="", mode="r")
     image_sources = {}
     points_sources = {}
@@ -284,27 +282,36 @@ def create_neuroglancer_state(
     image_shader_controls = {"normalized": {"range": [0, 255], "window": [0, 255]}}
     annotation_shader = r"void main(){setColor(prop_point_color());}"
 
-    for name, sub_group in image_group.groups():
-        point_dir = name.removesuffix(".zarr") + ".precomputed"
+    for fname, sub_group in image_group.groups():
+        point_dir = fname.removesuffix(".zarr") + ".precomputed"
         point_url = f"{points_url}/{point_dir}"
         if points_fs.exists(os.path.join(points_path, point_dir)):
-            image_sources[name] = f"zarr://{get_url(sub_group)}"
-            points_sources[name] = f"precomputed://{point_url}"
+            image_sources[fname] = f"zarr://{get_url(sub_group)}"
+            points_sources[fname] = f"precomputed://{point_url}"
 
-    if layer_per_tile:
-        for name, im_source in image_sources:
-            point_source = points_sources[name]
+    if style == "images_split":
+        for fname, im_source in image_sources.items():
+            point_source = points_sources[fname]
+            coordinate = image_name_to_tile_coord(fname)
+            name_base = f"x={coordinate['x']}, y={coordinate['y']}, z={coordinate['z']}, ch={coordinate['ch']}"
+            color = tile_coordinate_to_rgba(coordinate)
+            color_str = "#{0:02x}{1:02x}{2:02x}".format(*color)
+            shader = (
+            "#uicontrol invlerp normalized()\n"
+            f'#uicontrol vec3 color color(default="{color_str}")\n'
+            "void main(){{emitRGB(color * normalized());}}")
+
             state.layers.append(
-                name=name,
+                name=f"{name_base}/img",
                 layer=ImageLayer(
-                    source=im_source, shaderControls=image_shader_controls
+                    source=im_source, shaderControls=image_shader_controls, shader=shader
                 ),
             )
             state.layers.append(
-                name=name,
+                name=f"{name_base}/geom",
                 layer=AnnotationLayer(source=point_source, shader=annotation_shader),
             )
-    else:
+    elif style == "images_combined":
         state.layers.append(
             name="images",
             layer=ImageLayer(
@@ -318,7 +325,9 @@ def create_neuroglancer_state(
                 source=list(points_sources.values()), shader=annotation_shader
             ),
         )
-
+    else:
+        msg = f"Style {style} not recognized. Style must be one of 'images_combined' or 'images_split'"
+        raise ValueError(msg)
     return state
 
 

@@ -9,6 +9,7 @@ from matchviz import (
     get_tilegroup_s3_url,
     parse_bigstitcher_xml_from_s3,
     save_interest_points,
+    NeuroglancerViewerStyle
 )
 
 
@@ -56,16 +57,26 @@ def save_points(url: str, dest: str, ngjson: str | None, nghost: str | None):
 @click.argument("url", type=click.STRING)
 @click.argument("dest", type=click.STRING)
 @click.argument("points_url", type=click.STRING)
-def save_neuroglancer_json_cli(url: str, dest: str, points_url: str):
-    save_neuroglancer_json(url=url, dest=dest, points_url=points_url)
+@click.option("--style", type=click.STRING, multiple=True)
+def save_neuroglancer_json_cli(
+    url: str, 
+    dest: str, 
+    points_url: str, 
+    style: list[NeuroglancerViewerStyle] | None = None):
+    if style is None or len(style) < 1:
+        style = ["images_combined", "images_split"]
+    for _style in style:
+        save_neuroglancer_json(url=url, dest=dest, points_url=points_url, style=_style)
 
 
-def save_neuroglancer_json(url: str, dest: str, points_url: str):
+def save_neuroglancer_json(
+        url: str, dest: str, points_url: str, style: NeuroglancerViewerStyle):
     bs_model = parse_bigstitcher_xml_from_s3(url)
     tilegroup_s3_url = get_tilegroup_s3_url(bs_model)
     state = create_neuroglancer_state(
         image_url=tilegroup_s3_url,
         points_url=points_url,
+        style=style
     )
 
     fs, _ = fsspec.url_to_fs(dest)
