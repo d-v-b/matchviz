@@ -86,3 +86,11 @@ def test_write_annotations():
     writer.add_point((0, 1, 0))
     # mock s3 here
     writer.write("")
+
+from matchviz.transform import parse_transform
+
+def test_parse_bigstitcher_xml_from_s3():
+    bs_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/"
+    bs_model = parse_bigstitcher_xml_from_s3(bs_url)
+    vrs = bs_model.view_registrations.elements
+    parsed = [parse_transform(t) for t in vrs[0].view_transforms]

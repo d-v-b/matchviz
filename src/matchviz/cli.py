@@ -56,11 +56,13 @@ def save_points(url: str, dest: str, ngjson: str | None, nghost: str | None):
 @click.argument("alignment_url", type=click.STRING)
 @click.argument("points_url", type=click.STRING)
 @click.argument("dest_path", type=click.STRING)
+@click.option("--apply-transform", type=click.BOOL, default=False)
 @click.option("--style", type=click.STRING, multiple=True)
 def save_neuroglancer_json_cli(
     alignment_url: str, 
     dest_path: str, 
-    points_url: str, 
+    points_url: str,
+    apply_transform: bool, 
     style: list[NeuroglancerViewerStyle] | None = None):
     if style is None or len(style) < 1:
         style = ["images_combined", "images_split"]
@@ -69,6 +71,7 @@ def save_neuroglancer_json_cli(
             alignment_url=alignment_url, 
             dest_path=dest_path, 
             points_url=points_url, 
+            apply_transform=apply_transform,
             style=_style)
 
 
@@ -76,13 +79,17 @@ def save_neuroglancer_json(
         *,
         alignment_url: str, 
         points_url: str, 
-        dest_path: str, 
+        dest_path: str,
+        apply_transform: bool, 
         style: NeuroglancerViewerStyle):
     bs_model = parse_bigstitcher_xml_from_s3(alignment_url)
+
     tilegroup_s3_url = get_tilegroup_s3_url(bs_model)
+
     state = create_neuroglancer_state(
         image_url=tilegroup_s3_url,
         points_url=points_url,
+        image_affines=image_affines,
         style=style
     )
     out_fname = f"{style}.json"

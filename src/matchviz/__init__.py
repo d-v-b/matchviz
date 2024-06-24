@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 from __future__ import annotations
 
-from typing import Annotated, Literal, Sequence, cast
+from typing import Annotated, Any, Literal, Sequence, cast
 import neuroglancer.coordinate_space
 import numpy as np
 import zarr
@@ -259,9 +259,12 @@ def get_url(node: zarr.Group | zarr.Array) -> str:
 
 
 def create_neuroglancer_state(
+    *,
     image_url: str,
     points_url: str,
-    style: NeuroglancerViewerStyle,
+    image_affines: Any = None,
+    style: NeuroglancerViewerStyle = "images_combined",
+
 ):
     image_group = zarr.open_group(store=image_url, path="", mode="r")
     image_sources = {}
