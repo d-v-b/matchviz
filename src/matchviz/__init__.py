@@ -23,6 +23,8 @@ import logging
 import fsspec
 from neuroglancer import ImageLayer, AnnotationLayer, ViewerState, CoordinateSpace
 
+OUT_PREFIX="tile_alignment_visualization"
+
 from matchviz.neuroglancer_styles import NeuroglancerViewerStyle
 class Tx(TypedDict):
     scale: float
@@ -152,8 +154,10 @@ def load_points(
     if coords is not None:
         translate_points(coords, loc)
 
+    if 'id' not in interest_points_group:
+        raise ValueError('No ids found in this group')
+    
     ids = interest_points_group["id"][:]
-    intensity = interest_points_group["intensities"][:]
 
     idmap_parsed = parse_idmap(correspondences_group.attrs["idMap"])
     # map from pair index to image id
@@ -162,9 +166,9 @@ def load_points(
     matches = np.array(correspondences_group["data"])
     # replace the pair id value with an actual image index reference in the last column
     matches[:, -1] = np.vectorize(remap.get)(matches[:, -1])
-
+    ids_list = ids.squeeze().tolist()
     return pl.DataFrame(
-        {"id": ids, "loc_xyz": loc, "intensity": intensity}
+        {"id": ids_list, "loc_xyz": loc}
     ), pl.DataFrame(
         {
             "point_self": matches[:, 0],
@@ -346,9 +350,9 @@ def save_points_tile(
     N5 is organized according to the structure defined here: https://github.com/PreibischLab/multiview-reconstruction/blob/a566bf4d6d35a7ab00d976a8bf46f1615b34b2d0/src/main/java/net/preibisch/mvrecon/fiji/spimdata/interestpoints/InterestPointsN5.java#L54
     """
 
-    # base_coords = tile_coords[vs_id]
-
     logger = logging.getLogger(__name__)
+    logger.setLevel('INFO')
+    logger.info(f"saving tile id {vs_id}")
     # remove trailing slash
     alignment_url = alignment_url.rstrip("/")
     alignment_store = zarr.N5FSStore(alignment_url)
@@ -393,20 +397,17 @@ def save_points_tile(
     point_map_self = points_map[vs_id]
 
     for row in matches_map[vs_id].rows():
-        logger.info("saving tile id {vs_id}")
         point_self, point_other, id_other = row
-        line_start = (
-            point_map_self.get_column("loc_xyz")[point_self]
-            .clone()
-            .extend(pl.Series([0.0]))
-        )
-        loc_xyz_other = points_map[id_other].get_column("loc_xyz")
+        row_self = point_map_self.row(by_predicate=(pl.col('id') == point_self), named=True)
+        line_start = (*row_self['loc_xyz'], 0.0) # add a 0 for the time coordinate
         try:
-            line_stop = loc_xyz_other[point_other].clone().extend(pl.Series([0.0]))
-        except IndexError:
-            print(f"indexing error with {point_other} into vs_id {id_other}")
+            row_other = points_map[id_other].row(by_predicate=(pl.col('id') == point_other), named=True)
+            line_stop = (*row_other['loc_xyz'], 0.0) # add a 0 for the time coordinate
+
+        except pl.exceptions.NoRowsReturnedError:
+            logger.info(f"indexing error with {point_other} into vs_id {id_other}")
             line_stop = line_start
-        # add the fake time coordinate
+
         line_starts.append(line_start)
         line_stops.append(line_stop)
 
