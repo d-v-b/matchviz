@@ -9,6 +9,7 @@ from matchviz import (
     image_name_to_tile_coord,
 )
 from matchviz.annotation import AnnotationWriterFSSpec
+from matchviz.transform import compose_transforms, parse_transform
 import neuroglancer
 import pytest
 
@@ -87,10 +88,21 @@ def test_write_annotations():
     # mock s3 here
     writer.write("")
 
-from matchviz.transform import parse_transform
 
-def test_parse_bigstitcher_xml_from_s3():
-    bs_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/"
+@pytest.mark.parametrize(
+    "bs_url",
+    [
+        "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/",
+        "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-04_02-01-16/",
+        "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/",
+        "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-16-49/",
+        "s3://aind-open-data/exaSPIM_704523_2024-05-03_11-03-13_alignment_2024-05-23_22-32-43/",
+    ],
+)
+def test_parse_bigstitcher_xml_from_s3(bs_url: str):
     bs_model = parse_bigstitcher_xml_from_s3(bs_url)
     vrs = bs_model.view_registrations.elements
-    parsed = [parse_transform(t) for t in vrs[0].view_transforms]
+    parsed = [[parse_transform(vt) for vt in vr.view_transforms] for vr in vrs]
+    print(bs_url)
+    print(compose_transforms(parsed[0][:-1]))
+    print(compose_transforms(parsed[1][:-1]))
