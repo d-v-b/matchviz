@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Iterable, Sequence
 import neuroglancer
 import numpy as np
 from neuroglancer.write_annotations import AnnotationWriter
@@ -6,29 +7,9 @@ import fsspec
 import os
 from typing_extensions import Self
 import json
-from tqdm import tqdm
+import time
 import logging
 import io
-
-
-def write_line_annotations(
-    path: str,
-    lines: np.ndarray,
-    coordinate_space: neuroglancer.CoordinateSpace,
-    rgba: tuple[int, int, int, int] = (255, 255, 255, 255),
-) -> None:
-    writer = AnnotationWriterFSSpec(
-        coordinate_space=coordinate_space,
-        annotation_type="line",
-        properties=[
-            neuroglancer.AnnotationPropertySpec(id="line_color", type="rgba"),
-            neuroglancer.AnnotationPropertySpec(id="point_color", type="rgba"),
-        ],
-    )
-
-    [writer.add_line(*points, point_color=rgba, line_color=rgba) for points in lines]
-    writer.write(path)
-
 
 pool = ThreadPoolExecutor(max_workers=36)
 
@@ -39,26 +20,73 @@ def cp(buf_in, fs_out, fname):
     return "ok"
 
 
+def write_line_annotations(
+    path: str,
+    lines: Iterable[tuple[tuple[float, ...], ...]],
+    coordinate_space: neuroglancer.CoordinateSpace,
+    *,
+    point_color: tuple[int, int, int, int] = (255, 255, 255, 255),
+    line_color: tuple[int, int, int, int] = (255, 255, 255, 255),
+) -> None:
+    """
+    Save a collection of paired points (i.e., lines) as neuroglancer precomputed annotations.
+
+    Lines will be stored with a `point_color` attribute, which defaults to (255, 255, 255, 255),
+    and a `line_color` attribute, which defaults to (255, 255, 255, 255)
+    """
+    writer = AnnotationWriterFSSpec(
+        coordinate_space=coordinate_space,
+        annotation_type="line",
+        properties=[
+            neuroglancer.AnnotationPropertySpec(id="line_color", type="rgba"),
+            neuroglancer.AnnotationPropertySpec(id="point_color", type="rgba"),
+        ],
+    )
+
+    [
+        writer.add_line(*points, point_color=point_color, line_color=line_color)
+        for points in lines
+    ]
+    writer.write(path)
+
+
 def write_point_annotations(
     path: str,
-    points: np.ndarray,
+    *,
+    points: np.ndarray | list[Sequence[float]],
+    ids: np.ndarray | list[Sequence[float]],
     coordinate_space: neuroglancer.CoordinateSpace,
-    rgba: tuple[int, int, int, int] = (127, 255, 127, 255),
+    point_size=10,
+    point_color: tuple[int, int, int, int] = (127, 255, 127, 255),
 ) -> None:
+    """
+    Save a collection of points as neuroglancer precomputed annotations.
+
+    Points will be stored with the following attributes:
+    - `id`, which is the id of each point,
+    - `size` attribute, which defaults to 10,
+    - `point_color`, which defaults to (127, 255, 127, 255)
+    """
     writer = AnnotationWriterFSSpec(
         coordinate_space=coordinate_space,
         annotation_type="point",
         properties=[
+            neuroglancer.AnnotationPropertySpec(id="id", type="int32"),
             neuroglancer.AnnotationPropertySpec(id="size", type="float32"),
             neuroglancer.AnnotationPropertySpec(id="point_color", type="rgba"),
         ],
     )
 
-    [writer.add_point(c, size=10, point_color=rgba) for c in points]
+    for _id, point in zip(ids, points):
+        writer.add_point(point, id=_id, size=point_size, point_color=point_color)
     writer.write(path)
 
 
 class AnnotationWriterFSSpec(AnnotationWriter):
+    """
+    An AnnotationWriter that uses FSSpec for writing, enabling cloud storage.
+    """
+
     def write(self: Self, path: str) -> None:
         logger = logging.getLogger(__name__)
 
@@ -89,16 +117,15 @@ class AnnotationWriterFSSpec(AnnotationWriter):
             ],
         }
 
-        if path.startswith("s3://"):
-            fs = fsspec.filesystem("s3")
-        else:
-            fs = fsspec.filesystem("local", auto_mkdir=True)
+        fs, _ = fsspec.url_to_fs(path, auto_mkdir=True)
 
         spatial_path = os.path.join(
             path, "spatial0", "_".join("0" for _ in range(self.rank))
         )
 
+        start = time.time()
         logger.info("Writing info...")
+
         with fs.open(os.path.join(path, "info"), mode="w") as f:
             f.write(json.dumps(metadata))
 
@@ -106,10 +133,12 @@ class AnnotationWriterFSSpec(AnnotationWriter):
         spatial_buf = io.BytesIO()
         self._serialize_annotations(spatial_buf, self.annotations)
         spatial_buf.seek(0)
+
         with fs.open(spatial_path, mode="wb") as f_rem:
             f_rem.write(spatial_buf.read())
 
         logger.info(f'Preparing to write annotations to {os.path.join(path, "by_id")}')
+
         for annotation in self.annotations:
             by_id_path = os.path.join(path, "by_id", str(annotation.id))
 
@@ -133,5 +162,8 @@ class AnnotationWriterFSSpec(AnnotationWriter):
                 fut = pool.submit(cp, rel_buf, fs, rel_path)
                 fut_map[fut] = rel_path
 
-        for result in tqdm(as_completed(fut_map.keys())):
+        for result in as_completed(fut_map.keys()):
             _ = result.result()
+
+        elapsed = time.time() - start
+        logger.info(f"Completed saving annotation in {elapsed:.4f} s")

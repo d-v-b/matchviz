@@ -4,7 +4,7 @@ from matchviz import (
     load_points,
     parse_bigstitcher_xml_from_s3,
     parse_idmap,
-    save_points_tile,
+    save_annotations,
     save_interest_points,
     image_name_to_tile_coord,
 )
@@ -30,12 +30,11 @@ def test_create_neuroglancer_state():
 def test_viz(tmpdir):
     dataset = "exaSPIM_708373_2024-04-02_19-49-38"
     alignment_id = "alignment_2024-05-07_18-15-25"
-    _ = save_points_tile(
+    _ = save_annotations(
         dataset=dataset, alignment_id=alignment_id, out_prefix=str(tmpdir)
     )
 
 
-@pytest.mark.skip
 def test_save_points_tile():
     bs_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/"
     bs_model = parse_bigstitcher_xml_from_s3(bs_url)
@@ -43,8 +42,8 @@ def test_save_points_tile():
     alignment_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/interestpoints.n5/tpId_0_viewSetupId_0/"
     out_prefix = "points_out"
     tile_coords = get_tile_coords(bs_model)
-    save_points_tile(
-        vs_id=0,
+    save_annotations(
+        image_id=0,
         tile_name=tile_name,
         alignment_url=alignment_url,
         out_prefix=out_prefix,

@@ -18,14 +18,15 @@ import re
 from typing_extensions import TypedDict
 import polars as pl
 from pydantic_bigstitcher import ViewSetup
-from matchviz.annotation import write_line_annotations
+from matchviz.annotation import write_line_annotations, write_point_annotations
 import logging
 import fsspec
 from neuroglancer import ImageLayer, AnnotationLayer, ViewerState, CoordinateSpace
-
-OUT_PREFIX="tile_alignment_visualization"
-
 from matchviz.neuroglancer_styles import NeuroglancerViewerStyle
+
+OUT_PREFIX = "tile_alignment_visualization"
+
+
 class Tx(TypedDict):
     scale: float
     trans: float
@@ -137,45 +138,63 @@ def translate_points(coords: Coords, points: np.ndarray):
 
 def load_points(
     interest_points_url: str, coords: Coords | None
-) -> tuple[pl.DataFrame, pl.DataFrame]:
+) -> tuple[pl.DataFrame, pl.DataFrame | None]:
     """
-    e.g. interestpoints.n5/tpId_0_viewSetupId_3/beads
+    Load interest points and optionally correspondences from a bigstitcher-formatted n5 group as
+    polars dataframes.
     """
+    logger = logging.getLogger(__name__)
     store = zarr.N5FSStore(interest_points_url, mode="r")
     interest_points_group = zarr.open_group(
         store=store, path="interestpoints", mode="r"
     )
+
+    if "id" not in interest_points_group:
+        raise ValueError(
+            f"Failed to find expected n5 dataset at {get_url(interest_points_group)}/id"
+        )
+    if "loc" not in interest_points_group:
+        raise ValueError(
+            f"Failed to find expected n5 dataset at {get_url(interest_points_group)}/loc"
+        )
+
     correspondences_group = zarr.open_group(
         store=store, path="correspondences", mode="r"
     )
+
+    matches_exist = "data" in correspondences_group
+    if not matches_exist:
+        logger.info("No matches found.")
+
     # points are saved as [num_points, [x, y, z]]
     loc = interest_points_group["loc"][:]
 
     if coords is not None:
         translate_points(coords, loc)
 
-    if 'id' not in interest_points_group:
-        raise ValueError('No ids found in this group')
-    
     ids = interest_points_group["id"][:]
-
-    idmap_parsed = parse_idmap(correspondences_group.attrs["idMap"])
-    # map from pair index to image id
-    remap = {value: key[1] for key, value in idmap_parsed.items()}
-    # matches are saved as [num_matches, [point_self, point_other, match_id]]
-    matches = np.array(correspondences_group["data"])
-    # replace the pair id value with an actual image index reference in the last column
-    matches[:, -1] = np.vectorize(remap.get)(matches[:, -1])
     ids_list = ids.squeeze().tolist()
-    return pl.DataFrame(
-        {"id": ids_list, "loc_xyz": loc}
-    ), pl.DataFrame(
-        {
-            "point_self": matches[:, 0],
-            "point_other": matches[:, 1],
-            "id_other": matches[:, 2],
-        }
-    )
+    if matches_exist:
+        idmap_parsed = parse_idmap(correspondences_group.attrs["idMap"])
+        # map from pair index to image id
+        remap = {value: key[1] for key, value in idmap_parsed.items()}
+
+        # matches are saved as [num_matches, [point_self, point_other, match_id]]
+        matches = np.array(correspondences_group["data"])
+        # replace the pair id value with an actual image index reference in the last column
+        matches[:, -1] = np.vectorize(remap.get)(matches[:, -1])
+
+        match_result = pl.DataFrame(
+            {
+                "point_self": matches[:, 0],
+                "point_other": matches[:, 1],
+                "id_other": matches[:, 2],
+            }
+        )
+    else:
+        match_result = None
+
+    return pl.DataFrame({"id": ids_list, "loc_xyz": loc}), match_result
 
 
 def get_tile_coords(bs_model: SpimData2) -> dict[int, Coords]:
@@ -225,8 +244,8 @@ def save_interest_points(bs_model: SpimData2, base_url: str, out_prefix: str):
             base_url, "interestpoints.n5", file.path.split("/")[0]
         )
 
-        save_points_tile(
-            vs_id=setup_id,
+        save_annotations(
+            image_id=setup_id,
             tile_name=tile_name,
             alignment_url=alignment_url,
             out_prefix=out_prefix,
@@ -283,7 +302,9 @@ def create_neuroglancer_state(
     )
     points_fs, points_path = fsspec.url_to_fs(points_url)
 
-    state = ViewerState(dimensions=space, cross_section_scale=1000, projection_scale=500_000)
+    state = ViewerState(
+        dimensions=space, cross_section_scale=1000, projection_scale=500_000
+    )
     image_shader_controls = {"normalized": {"range": [0, 255], "window": [0, 255]}}
     annotation_shader = r"void main(){setColor(prop_point_color());}"
 
@@ -302,14 +323,17 @@ def create_neuroglancer_state(
             color = tile_coordinate_to_rgba(coordinate)
             color_str = "#{0:02x}{1:02x}{2:02x}".format(*color)
             shader = (
-            "#uicontrol invlerp normalized()\n"
-            f'#uicontrol vec3 color color(default="{color_str}")\n'
-            "void main(){{emitRGB(color * normalized());}}")
+                "#uicontrol invlerp normalized()\n"
+                f'#uicontrol vec3 color color(default="{color_str}")\n'
+                "void main(){{emitRGB(color * normalized());}}"
+            )
 
             state.layers.append(
                 name=f"{name_base}/img",
                 layer=ImageLayer(
-                    source=im_source, shaderControls=image_shader_controls, shader=shader
+                    source=im_source,
+                    shaderControls=image_shader_controls,
+                    shader=shader,
                 ),
             )
             state.layers.append(
@@ -336,53 +360,69 @@ def create_neuroglancer_state(
     return state
 
 
-def save_points_tile(
-    vs_id: int,
+def save_annotations(
+    image_id: int,
     tile_name: str,
     alignment_url: str,
     out_prefix: str,
     tile_coords: dict[int, Coords],
 ):
     """
-    e.g. dataset = 'exaSPIM_3163606_2023-11-17_12-54-51'
+    Load points and correspondences (matches) between a single tile an all other tiles, and save as neuroglancer
+    precomputed annotations.
+
+        e.g. dataset = 'exaSPIM_3163606_2023-11-17_12-54-51'
         alignment_id = 'alignment_2024-01-09_05-00-44'
 
     N5 is organized according to the structure defined here: https://github.com/PreibischLab/multiview-reconstruction/blob/a566bf4d6d35a7ab00d976a8bf46f1615b34b2d0/src/main/java/net/preibisch/mvrecon/fiji/spimdata/interestpoints/InterestPointsN5.java#L54
+
+    If matches are not point, then just the interest points will be saved.
     """
 
     logger = logging.getLogger(__name__)
-    logger.setLevel('INFO')
-    logger.info(f"saving tile id {vs_id}")
+    logger.setLevel("INFO")
+    logger.info(f"Saving annotations for image id {image_id}")
+    points_url = f"{out_prefix}/points/{tile_name}.precomputed"
+    lines_url = f"{out_prefix}/matches/{tile_name}.precomputed"
+
     # remove trailing slash
     alignment_url = alignment_url.rstrip("/")
     alignment_store = zarr.N5FSStore(alignment_url)
-    base_coords = tile_coords[vs_id]
+    base_coords = tile_coords[image_id]
+
     match_group = zarr.open_group(
         store=alignment_store, path="beads/correspondences", mode="r"
     )
 
-    id_map = parse_idmap(match_group.attrs.asdict()["idMap"])
-    # the idMap attribute uses 0 instead of the actual setup id for the self in this metadata.
-    # normalizing replaces that 0 with the actual setup id.
-    id_map_normalized = {(vs_id, *key[1:]): value for key, value in id_map.items()}
-
+    to_access: tuple[int, ...] = (image_id,)
+    id_map_normalized = {}
     # tuple of view_setup ids to load
-    to_access: tuple[int, ...] = (vs_id,)
-    points_map = {}
-    matches_map = {}
+    points_map: dict[int, pl.DataFrame] = {}
+    matches_map: dict[int, None | pl.DataFrame] = {}
+
+    matches_exist = "data" in match_group
+
+    if matches_exist:
+        id_map = parse_idmap(match_group.attrs.asdict()["idMap"])
+        # the idMap attribute uses 0 instead of the actual setup id for the self in this metadata.
+        # normalizing replaces that 0 with the actual setup id.
+        id_map_normalized = {
+            (image_id, *key[1:]): value for key, value in id_map.items()
+        }
 
     for key in id_map_normalized:
         to_access += (key[1],)
 
-    for other_id in to_access:
-        new_name = f"tpId_0_viewSetupId_{other_id}"
+    for img_id in to_access:
+        new_name = f"tpId_0_viewSetupId_{img_id}"
         new_url = os.path.join(os.path.split(alignment_url)[0], new_name, "beads")
 
         points_data, match_data = load_points(
-            interest_points_url=new_url, coords=tile_coords[other_id]
+            interest_points_url=new_url, coords=tile_coords[img_id]
         )
-        points_map[other_id] = points_data
-        matches_map[other_id] = match_data
+
+        points_map[img_id] = points_data
+        matches_map[img_id] = match_data
 
     annotation_scales = [base_coords[dim]["scale"] for dim in ("x", "y", "z", "t")]  # type: ignore
     annotation_units = ["um", "um", "um", "s"]
@@ -392,32 +432,66 @@ def save_points_tile(
 
     point_color = tile_coordinate_to_rgba(image_name_to_tile_coord(tile_name))
 
-    line_starts = []
-    line_stops = []
-    point_map_self = points_map[vs_id]
+    line_starts: list[tuple[float, float, float]] = []
+    line_stops: list[tuple[float, float, float]] = []
+    point_map_self = points_map[image_id]
 
-    for row in matches_map[vs_id].rows():
-        point_self, point_other, id_other = row
-        row_self = point_map_self.row(by_predicate=(pl.col('id') == point_self), named=True)
-        line_start = (*row_self['loc_xyz'], 0.0) # add a 0 for the time coordinate
-        try:
-            row_other = points_map[id_other].row(by_predicate=(pl.col('id') == point_other), named=True)
-            line_stop = (*row_other['loc_xyz'], 0.0) # add a 0 for the time coordinate
-
-        except pl.exceptions.NoRowsReturnedError:
-            logger.info(f"indexing error with {point_other} into vs_id {id_other}")
-            line_stop = line_start
-
-        line_starts.append(line_start)
-        line_stops.append(line_stop)
-
-    lines_loc = tuple(zip(*(line_starts, line_stops)))
-    write_line_annotations(
-        f"{out_prefix}/{tile_name}.precomputed",
-        lines=lines_loc,
+    # save points for self
+    # pad with 0 for time coordinate
+    point_data = [(*p, 0.0) for p in point_map_self.get_column("loc_xyz").to_list()]
+    id_data = point_map_self.get_column("id").to_list()
+    write_point_annotations(
+        points_url,
+        points=point_data,
+        ids=id_data,
         coordinate_space=annotation_space,
-        rgba=point_color,
+        point_color=point_color,
     )
+    breakpoint()
+    if matches_map[image_id] is not None:
+        match_entry = matches_map[image_id]
+        if match_entry is None:
+            raise ValueError(f"Missing match data for {image_id}")
+        match_entry = cast(pl.DataFrame, match_entry)
+        for row in match_entry.rows():
+            point_self, point_other, id_other = row
+            row_self = point_map_self.row(
+                by_predicate=(pl.col("id") == point_self), named=True
+            )
+            line_start = (
+                *row_self["loc_xyz"],
+                0.0,
+            )  # add a 0 for the time coordinate
+            if len(line_start) != 4:
+                msg = f"Wrong number of elements in line_start ({len(line_start)})"
+                raise ValueError(msg)
+            line_start = cast(tuple[float, float, float], line_start)
+            try:
+                row_other = points_map[id_other].row(
+                    by_predicate=(pl.col("id") == point_other), named=True
+                )
+                line_stop = (
+                    *row_other["loc_xyz"],
+                    0.0,
+                )  # add a 0 for the time coordinate
+                if len(line_stop) != 4:
+                    msg = f"Wrong number of elements in line_start ({len(line_start)})"
+                line_stop = cast(tuple[float, float, float], line_stop)
+
+            except pl.exceptions.NoRowsReturnedError:
+                logger.info(f"indexing error with {point_other} into vs_id {id_other}")
+                line_stop = line_start
+
+            line_starts.append(line_start)
+            line_stops.append(line_stop)
+
+        lines_loc = tuple(zip(*(line_starts, line_stops)))
+        write_line_annotations(
+            lines_url,
+            lines=lines_loc,
+            coordinate_space=annotation_space,
+            point_color=point_color,
+        )
 
 
 def tile_coordinate_to_rgba(coord: TileCoordinate) -> tuple[int, int, int, int]:
