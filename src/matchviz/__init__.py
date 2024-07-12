@@ -447,7 +447,6 @@ def save_annotations(
         coordinate_space=annotation_space,
         point_color=point_color,
     )
-    breakpoint()
     if matches_map[image_id] is not None:
         match_entry = matches_map[image_id]
         if match_entry is None:
