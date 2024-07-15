@@ -27,6 +27,9 @@ def cli(): ...
 @click.option("--dest", type=click.STRING, required=True)
 def save_interest_points_cli(src: str, dest: str):
     logging.basicConfig(level="INFO")
+    # strip trailing '/' from src and dest
+    src_parsed = src.rstrip("/")
+    dest_parsed = dest.rstrip("/")
     save_points(url=src, dest=dest)
 
 
@@ -46,12 +49,14 @@ def save_neuroglancer_json_cli(
     points_url: str,
     style: Sequence[NeuroglancerViewerStyle] | None = None,
 ):
+    alignment_url_parsed = alignment_url.rstrip("/")
+    dest_path_parsed = dest_path.rstrip("/")
     if style is None or len(style) < 1:
         style = neuroglancer_view_styles
     for _style in style:
         save_neuroglancer_json(
-            alignment_url=alignment_url,
-            dest_path=dest_path,
+            alignment_url=alignment_url_parsed,
+            dest_path=dest_path_parsed,
             points_url=points_url,
             style=_style,
         )
