@@ -8,24 +8,39 @@ from matchviz import (
     create_neuroglancer_state,
     get_tilegroup_s3_url,
     parse_bigstitcher_xml_from_s3,
-    save_interest_points
+    save_interest_points,
 )
-from matchviz.neuroglancer_styles import NeuroglancerViewerStyle, fnames
+from matchviz.neuroglancer_styles import (
+    NeuroglancerViewerStyle,
+    fnames,
+    neuroglancer_view_styles,
+)
+
 
 @click.group("matchviz")
 def cli(): ...
 
 
 @cli.command("save-points")
-@click.argument("url", type=click.STRING)
-@click.argument("dest", type=click.STRING)
+@click.option("--src", type=click.STRING)
+@click.option("--dest", type=click.STRING)
 @click.option("--ngjson", type=click.STRING)
 @click.option("--nghost", type=click.STRING)
 def save_interest_points_cli(
-    url: str, dest: str, ngjson: str | None, nghost: str | None
+    src: str | None, dest: str | None, ngjson: str | None, nghost: str | None
 ):
+    if src is None:
+        raise ValueError(
+            "A source (i.e., a path or URL to a alignment directory) must be provided."
+        )
+
+    if dest is None:
+        raise ValueError(
+            "A dest (i.e., a path to a URL or directory) must be provided."
+        )
+
     logging.basicConfig(level="INFO")
-    save_points(url=url, dest=dest, ngjson=ngjson, nghost=nghost)
+    save_points(url=src, dest=dest, ngjson=ngjson, nghost=nghost)
 
 
 def save_points(url: str, dest: str, ngjson: str | None, nghost: str | None):
@@ -38,7 +53,6 @@ def save_points(url: str, dest: str, ngjson: str | None, nghost: str | None):
         else:
             ng_url = dest
         tilegroup_s3_url = get_tilegroup_s3_url(bs_model)
-        state = create_neuroglancer_state(image_url=tilegroup_s3_url, points_url=ng_url)
 
         fs, _ = fsspec.url_to_fs(ngjson)
 
@@ -48,8 +62,12 @@ def save_points(url: str, dest: str, ngjson: str | None, nghost: str | None):
                     "You must provide a hostname to generate a neuroglancer viewer state if you are saving to local storage"
                 )
 
-        with fs.open(ngjson, mode="w") as fh:
-            fh.write(json.dumps(state.to_json()))
+        for style in neuroglancer_view_styles:
+            state = create_neuroglancer_state(
+                image_url=tilegroup_s3_url, points_url=ng_url, style=style
+            )
+            with fs.open(ngjson, mode="w") as fh:
+                fh.write(json.dumps(state.to_json()))
 
 
 @cli.command("ngjson")
@@ -58,32 +76,33 @@ def save_points(url: str, dest: str, ngjson: str | None, nghost: str | None):
 @click.argument("dest_path", type=click.STRING)
 @click.option("--style", type=click.STRING, multiple=True)
 def save_neuroglancer_json_cli(
-    alignment_url: str, 
-    dest_path: str, 
-    points_url: str, 
-    style: list[NeuroglancerViewerStyle] | None = None):
+    alignment_url: str,
+    dest_path: str,
+    points_url: str,
+    style: list[NeuroglancerViewerStyle] | None = None,
+):
     if style is None or len(style) < 1:
         style = ["images_combined", "images_split"]
     for _style in style:
         save_neuroglancer_json(
-            alignment_url=alignment_url, 
-            dest_path=dest_path, 
-            points_url=points_url, 
-            style=_style)
+            alignment_url=alignment_url,
+            dest_path=dest_path,
+            points_url=points_url,
+            style=_style,
+        )
 
 
 def save_neuroglancer_json(
-        *,
-        alignment_url: str, 
-        points_url: str, 
-        dest_path: str, 
-        style: NeuroglancerViewerStyle):
+    *,
+    alignment_url: str,
+    points_url: str,
+    dest_path: str,
+    style: NeuroglancerViewerStyle,
+):
     bs_model = parse_bigstitcher_xml_from_s3(alignment_url)
     tilegroup_s3_url = get_tilegroup_s3_url(bs_model)
     state = create_neuroglancer_state(
-        image_url=tilegroup_s3_url,
-        points_url=points_url,
-        style=style
+        image_url=tilegroup_s3_url, points_url=points_url, style=style
     )
     out_fname = f"{style}.json"
     out_path = os.path.join(dest_path, out_fname)
@@ -92,19 +111,19 @@ def save_neuroglancer_json(
     with fs.open(out_path, mode="w") as fh:
         fh.write(json.dumps(state.to_json()))
 
-@cli.command('html-report')
-@click.argument('dest_url', type=click.STRING)
-@click.argument('ngjson_url', type=click.STRING)
-@click.option('--header', type=click.STRING)
-@click.option('--title', type=click.STRING)
-def html_report_cl(dest_url: str, ngjson_url: str, header: str | None, title: str | None):
+
+@cli.command("html-report")
+@click.argument("dest_url", type=click.STRING)
+@click.argument("ngjson_url", type=click.STRING)
+@click.option("--header", type=click.STRING)
+@click.option("--title", type=click.STRING)
+def html_report_cl(
+    dest_url: str, ngjson_url: str, header: str | None, title: str | None
+):
     html_report(dest_url=dest_url, ngjson_url=ngjson_url, header=header, title=title)
 
-def html_report(
-        dest_url: str, 
-        ngjson_url: str, 
-        header: str | None, 
-        title: str | None):
+
+def html_report(dest_url: str, ngjson_url: str, header: str | None, title: str | None):
     if title is None:
         title = "Neuroglancer URLs"
     list_items = ()
@@ -134,8 +153,6 @@ def html_report(
     """
 
     fs, path = fsspec.url_to_fs(dest_url)
-    with fs.open(path, mode='w') as fh:
+    with fs.open(path, mode="w") as fh:
         fh.write(html)
     fh.setxattr(content_type="text/html")
-    
-    

@@ -205,7 +205,7 @@ def get_tile_coords(bs_model: SpimData2) -> dict[int, Coords]:
     tile_coords: dict[int, Coords] = {}
     tilegroup_url = get_tilegroup_s3_url(bs_model)
     view_setup_dict: dict[str, ViewSetup] = {
-        v.ident: v for v in bs_model.sequence_description.view_setups.view_setup
+        v.ident: v for v in bs_model.sequence_description.view_setups.view_setups
     }
     for file in bs_model.view_interest_points.data:
         setup_id = file.setup
@@ -231,8 +231,9 @@ def save_interest_points(bs_model: SpimData2, base_url: str, out_prefix: str):
     """
 
     view_setup_dict: dict[int, ViewSetup] = {
-        int(v.ident): v for v in bs_model.sequence_description.view_setups.view_setup
+        int(v.ident): v for v in bs_model.sequence_description.view_setups.view_setups
     }
+
     # generate a coordinate grid for all the images
     tile_coords: dict[int, Coords] = get_tile_coords(bs_model=bs_model)
 
