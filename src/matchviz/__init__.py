@@ -383,8 +383,8 @@ def save_annotations(
     logger = logging.getLogger(__name__)
     logger.setLevel("INFO")
     logger.info(f"Saving annotations for image id {image_id}")
-    points_url = f"{out_prefix}/points/{tile_name}.precomputed"
-    lines_url = f"{out_prefix}/matches/{tile_name}.precomputed"
+    points_url = os.path.join(out_prefix, f"points/{tile_name}.precomputed")
+    lines_url = os.path.join(out_prefix, f"matches/{tile_name}.precomputed")
 
     # remove trailing slash
     alignment_url = alignment_url.rstrip("/")

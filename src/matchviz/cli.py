@@ -30,7 +30,7 @@ def save_interest_points_cli(src: str, dest: str):
     # strip trailing '/' from src and dest
     src_parsed = src.rstrip("/")
     dest_parsed = dest.rstrip("/")
-    save_points(url=src, dest=dest)
+    save_points(url=src_parsed, dest=dest_parsed)
 
 
 def save_points(url: str, dest: str):
