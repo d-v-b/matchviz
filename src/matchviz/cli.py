@@ -49,17 +49,21 @@ def save_neuroglancer_json_cli(
     points_url: str,
     style: Sequence[NeuroglancerViewerStyle] | None = None,
 ):
+    logger = logging.getLogger(__name__)
+    # todo: make this sensitive
+    logger.setLevel("INFO")
     alignment_url_parsed = alignment_url.rstrip("/")
     dest_path_parsed = dest_path.rstrip("/")
     if style is None or len(style) < 1:
         style = neuroglancer_view_styles
     for _style in style:
-        save_neuroglancer_json(
+        out_path = save_neuroglancer_json(
             alignment_url=alignment_url_parsed,
             dest_path=dest_path_parsed,
             points_url=points_url,
             style=_style,
         )
+        logger.info(f"Saved neuroglancer JSON state for style {_style} to {out_path}")
 
 
 def save_neuroglancer_json(
@@ -68,7 +72,7 @@ def save_neuroglancer_json(
     points_url: str,
     dest_path: str,
     style: NeuroglancerViewerStyle,
-):
+) -> str:
     bs_model = parse_bigstitcher_xml_from_s3(alignment_url)
     tilegroup_s3_url = get_tilegroup_s3_url(bs_model)
     state = create_neuroglancer_state(
@@ -83,6 +87,8 @@ def save_neuroglancer_json(
 
     with fs.open(out_path, mode="w") as fh:
         fh.write(json.dumps(state.to_json()))
+
+    return out_path
 
 
 @cli.command("html-report")
