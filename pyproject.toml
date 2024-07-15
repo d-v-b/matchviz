@@ -29,7 +29,7 @@ dependencies = [
   "tensorstore==0.1.60", 
   "fsspec[s3]==2024.3.1", 
   "neuroglancer==2.39.2", 
-  "pydantic-bigstitcher==0.0.5", 
+  "pydantic-bigstitcher==0.0.6", 
   "pydantic-zarr==0.7.0",
   "pydantic-ome-ngff==0.5.0",
   "click==8.1.7",
