@@ -11,12 +11,11 @@ requires-python = ">=3.8"
 license = "MIT"
 keywords = []
 authors = [
-  { name = "U.N. Owen", email = "void@some.where" },
+  { name = "Davis Vann Bennett", email = "davis.v.bennett@gmail.com" },
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Programming Language :: Python",
-  "Programming Language :: Python :: 3.8",
   "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
@@ -34,7 +33,8 @@ dependencies = [
   "pydantic-ome-ngff==0.5.0",
   "click==8.1.7",
   "polars==0.20",
-  "tqdm==4.66.4"
+  "tqdm==4.66.4",
+  "numpy < 2"
   ]
 
 [project.urls]
@@ -45,14 +45,14 @@ Source = "https://github.com/unknown/matchviz"
 [tool.hatch.version]
 path = "src/matchviz/__about__.py"
 
-[tool.hatch.envs.default]
+[tool.hatch.envs.test]
 dependencies = [
   "coverage[toml]>=6.5",
   "pytest",
 ]
 
-[tool.hatch.envs.default.scripts]
-test = "pytest {args:tests}"
+[tool.hatch.envs.test.scripts]
+run = "pytest {args:tests}"
 test-cov = "coverage run -m pytest {args:tests}"
 cov-report = [
   "- coverage combine",
@@ -63,8 +63,8 @@ cov = [
   "cov-report",
 ]
 
-[[tool.hatch.envs.all.matrix]]
-python = ["3.8", "3.9", "3.10", "3.11", "3.12"]
+[[tool.hatch.envs.test.matrix]]
+python = ["3.9", "3.10", "3.11", "3.12"]
 
 [tool.hatch.envs.types]
 dependencies = [

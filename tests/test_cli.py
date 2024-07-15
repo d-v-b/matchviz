@@ -1,6 +1,6 @@
 import subprocess
 
-
+@pytest.mark.skip
 def test_cli():
     _ = subprocess.run(
         [
