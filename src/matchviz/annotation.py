@@ -119,7 +119,10 @@ class AnnotationWriterFSSpec(AnnotationWriter):
             ],
         }
 
-        fs, _ = fsspec.url_to_fs(path, auto_mkdir=True)
+        if path.startswith('s3"//'):
+            fs, _ = fsspec.url_to_fs(path)
+        else:
+            fs, _ = fsspec.url_to_fs(path, auto_mkdir=True)
 
         spatial_path = os.path.join(
             path, "spatial0", "_".join("0" for _ in range(self.rank))
@@ -156,10 +159,10 @@ class AnnotationWriterFSSpec(AnnotationWriter):
         for i, relationship in enumerate(self.relationships):
             rel_index = self.related_annotations[i]
 
-            for segment_id, annotations in rel_index.items():
+            for segment_id, anns in rel_index.items():
                 rel_path = os.path.join(path, f"rel_{relationship}", str(segment_id))
                 rel_buf = io.BytesIO()
-                self._serialize_annotations(rel_buf, annotations)
+                self._serialize_annotations(rel_buf, anns)
                 rel_buf.seek(0)
                 fut = pool.submit(cp, rel_buf, fs, rel_path)
                 fut_map[fut] = rel_path
