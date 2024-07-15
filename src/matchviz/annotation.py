@@ -119,7 +119,7 @@ class AnnotationWriterFSSpec(AnnotationWriter):
             ],
         }
 
-        if path.startswith('s3"//'):
+        if path.startswith("s3://"):
             fs, _ = fsspec.url_to_fs(path)
         else:
             fs, _ = fsspec.url_to_fs(path, auto_mkdir=True)
