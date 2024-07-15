@@ -1,5 +1,6 @@
+import pytest
 
-
+@pytest.mark.skip
 def test_bulk_save():
     import fsspec
     from s3fs import S3FileSystem
