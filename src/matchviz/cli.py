@@ -105,7 +105,7 @@ def html_report_cl(
 def html_report(dest_url: str, ngjson_url: str, header: str | None, title: str | None):
     if title is None:
         title = "Neuroglancer URLs"
-    list_items = ()
+    list_items: tuple[str, ...] = ()
     for key, value in fnames.items():
         description = value.description
         ng_url = os.path.join(ngjson_url, value.name)
