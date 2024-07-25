@@ -1,3 +1,4 @@
+import json
 from matchviz import (
     create_neuroglancer_state,
     get_tile_coords,
@@ -19,11 +20,13 @@ def test_from_bdv_xml():
     save_interest_points(base_url=base_url)
 
 
-@pytest.mark.skip
 def test_create_neuroglancer_state():
-    points_url = "http://localhost:3000/foo"
-    image_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38/SPIM.ome.zarr/"
-    _ = create_neuroglancer_state(image_url=image_url, points_url=points_url)
+    points_url = "s3://aind-open-data/exaSPIM_715345_2024-06-07_10-03-37_alignment_2024-07-01_19-45-38/tile_alignment_visualization/points/"
+    image_url = "s3://aind-open-data/exaSPIM_715345_2024-06-07_10-03-37/SPIM.ome.zarr/"
+    state = create_neuroglancer_state(
+        image_url=image_url, points_url=points_url, style="images_combined"
+    )
+    print(json.dumps(state.to_json(), indent=2))
 
 
 @pytest.mark.skip
@@ -33,6 +36,7 @@ def test_viz(tmpdir):
     _ = save_annotations(
         dataset=dataset, alignment_id=alignment_id, out_prefix=str(tmpdir)
     )
+
 
 @pytest.mark.skip
 def test_save_points_tile():

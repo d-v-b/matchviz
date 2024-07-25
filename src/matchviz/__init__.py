@@ -293,7 +293,7 @@ def get_histogram_bounds(image_url: str) -> tuple[int, int]:
     group = zarr.open_group(image_url, mode="r")
     arrays_sorted = sorted(group.arrays(), key=lambda kv: np.prod(kv[1].shape))
     smallest = arrays_sorted[0][1][:]
-    return smallest.min(), smallest.max()
+    return np.percentile(smallest, (5, 95))
 
 
 def get_histogram_bounds_batch(group_urls: tuple[str, ...]):
@@ -339,11 +339,11 @@ def create_neuroglancer_state(
             image_sources[fname] = f"zarr://{subgroup_url}"
             points_sources[fname] = f"precomputed://{point_url}"
 
+    # bias the histogram towards the brighter values
     hist_min, hist_max = reduce(
-        lambda old, new: (min(old[0], new[0]), max(old[1], new[1])),
+        lambda old, new: (max(old[0], new[0]), max(old[1], new[1])),
         histogram_bounds.values(),
     )
-    hist_max = hist_max / 10
     window_min = int(hist_min) - abs(int(hist_min) - int(hist_max)) // 3
     if window_min < 0:
         window_min = 0
