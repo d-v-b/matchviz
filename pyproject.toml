@@ -28,13 +28,15 @@ dependencies = [
   "tensorstore==0.1.60", 
   "fsspec[s3]==2024.3.1", 
   "neuroglancer==2.39.2", 
-  "pydantic-bigstitcher==0.0.6", 
+  "pydantic-bigstitcher==0.0.7", 
   "pydantic-zarr==0.7.0",
   "pydantic-ome-ngff==0.5.0",
   "click==8.1.7",
   "polars==0.20",
   "tqdm==4.66.4",
-  "numpy < 2"
+  "numpy < 2",
+  "matplotlib",
+  "xarray-ome-ngff"
   ]
 
 [project.urls]
@@ -51,6 +53,11 @@ dependencies = [
   "pytest",
 ]
 
+[tool.hatch.envs.notebook]
+dependencies = [
+  "ipykernel", 
+  "jupyterlab"]
+
 [tool.hatch.envs.test.scripts]
 run = "pytest {args:tests}"
 test-cov = "coverage run -m pytest {args:tests}"
@@ -64,7 +71,7 @@ cov = [
 ]
 
 [[tool.hatch.envs.test.matrix]]
-python = ["3.9", "3.10", "3.11", "3.12"]
+python = ["3.9"]
 
 [tool.hatch.envs.types]
 dependencies = [

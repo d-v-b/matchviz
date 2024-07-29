@@ -25,6 +25,9 @@ from neuroglancer import ImageLayer, AnnotationLayer, ViewerState, CoordinateSpa
 from matchviz.neuroglancer_styles import NeuroglancerViewerStyle
 from functools import reduce
 from concurrent.futures import ThreadPoolExecutor
+from matplotlib import colors
+import matplotlib.pyplot as plt
+from xarray_ome_ngff import read_multiscale_group
 
 pool = ThreadPoolExecutor(max_workers=16)
 
@@ -41,6 +44,48 @@ class Coords(TypedDict):
     x: Tx
     y: Tx
     z: Tx
+
+
+def plot_points(points_df: pl.DataFrame, image_group_path: str):
+    images_xarray = read_multiscale_group(
+        zarr.open_group(image_group_path, mode="r"),
+        array_wrapper={"name": "dask_array", "config": {"chunks": "auto"}},
+    )
+
+    loc_xyz = np.array(points_df["loc_xyz"].to_list())
+    fig, axs = plt.subplots(ncols=2, nrows=2, dpi=200, figsize=(8, 8))
+    ds = 100
+
+    dims = ("x", "y", "z")
+    img = images_xarray["4"].drop_vars(("t", "c")).squeeze()
+    pairs = ("z", "y"), None, ("z", "x"), ("x", "y")
+    for idx, pair in enumerate(pairs):
+        if pair is not None:
+            plot_x, plot_y = sorted(pair)
+            axis = axs.ravel()[idx]
+            proj_dim = tuple(set(dims) - set(pair))[0]
+            proj = img.max((proj_dim)).compute()
+            proj.name = f"proj_{proj_dim}"
+            proj.plot.imshow(
+                x=plot_x,
+                y=plot_y,
+                ax=axis,
+                robust=True,
+                norm=colors.LogNorm(),
+                cmap="gray_r",
+            )
+
+            axis.scatter(
+                loc_xyz[::ds, dims.index(plot_x)],
+                loc_xyz[::ds, dims.index(plot_y)],
+                marker="o",
+            )
+
+            axis.set_xlabel(plot_x)
+            axis.set_ylabel(plot_y)
+
+    fig.savefig("foo.svg")
+    breakpoint()
 
 
 def parse_idmap(data: dict[str, int]) -> dict[tuple[int, int, str], int]:
@@ -140,8 +185,14 @@ def translate_points(coords: Coords, points: np.ndarray):
         points[:, idx] += local_trans / local_scale
 
 
+def scale_points(coords: Coords, points: np.ndarray):
+    # Apply a scaling to each point
+    for idx, dim in enumerate(("x", "y", "z")):
+        points[:, idx] *= coords[dim]["scale"]  # type: ignore
+
+
 def load_points(
-    interest_points_url: str, coords: Coords | None
+    interest_points_url: str, coords: Coords | None = None
 ) -> tuple[pl.DataFrame, pl.DataFrame | None]:
     """
     Load interest points and optionally correspondences from a bigstitcher-formatted n5 group as
@@ -201,6 +252,18 @@ def load_points(
     return pl.DataFrame({"id": ids_list, "loc_xyz": loc}), match_result
 
 
+def ome_ngff_to_coords(url: str) -> Coords:
+    multi_meta = MultiscaleMetadata(
+        **zarr.open_group(url, mode="r").attrs.asdict()["multiscales"][0]
+    )
+    scale = multi_meta.datasets[0].coordinateTransformations[0].scale
+    trans = multi_meta.datasets[0].coordinateTransformations[1].translation
+    return {
+        axis.name: {"scale": s, "translation": t}
+        for axis, s, t in zip(multi_meta.axes, scale, trans)
+    }  # type: ignore
+
+
 def get_tile_coords(bs_model: SpimData2) -> dict[int, Coords]:
     """
     Get the coordinates of all the tiles referenced in bigstitcher xml data. Returns a dict with int
@@ -208,22 +271,18 @@ def get_tile_coords(bs_model: SpimData2) -> dict[int, Coords]:
     """
     tile_coords: dict[int, Coords] = {}
     tilegroup_url = get_tilegroup_s3_url(bs_model)
+
     view_setup_dict: dict[str, ViewSetup] = {
         v.ident: v for v in bs_model.sequence_description.view_setups.view_setups
     }
+
     for file in bs_model.view_interest_points.data:
         setup_id = file.setup
         tile_name = view_setup_dict[setup_id].name
         image_url = os.path.join(tilegroup_url, f"{tile_name}.zarr")
-        multi_meta = MultiscaleMetadata(
-            **zarr.open_group(image_url, mode="r").attrs.asdict()["multiscales"][0]
-        )
-        scale = multi_meta.datasets[0].coordinateTransformations[0].scale
-        trans = multi_meta.datasets[0].coordinateTransformations[1].translation
-        tile_coords[int(setup_id)] = {
-            axis.name: {"scale": s, "translation": t}
-            for axis, s, t in zip(multi_meta.axes, scale, trans)
-        }  # type: ignore
+        _coords = ome_ngff_to_coords(image_url)
+        tile_coords[int(setup_id)] = _coords
+
     return tile_coords
 
 
@@ -240,7 +299,8 @@ def save_interest_points(bs_model: SpimData2, base_url: str, out_prefix: str):
 
     # generate a coordinate grid for all the images
     tile_coords: dict[int, Coords] = get_tile_coords(bs_model=bs_model)
-
+    if bs_model.view_interest_points is None:
+        raise ValueError("No view interest points were found in the bigsti")
     for file in bs_model.view_interest_points.data:
         setup_id = int(file.setup)
         tile_name = view_setup_dict[setup_id].name
@@ -286,9 +346,9 @@ def get_url(node: zarr.Group | zarr.Array) -> str:
         raise ValueError(msg)
 
 
-def get_histogram_bounds(image_url: str) -> tuple[int, int]:
+def get_percentiles(image_url: str) -> tuple[int, int]:
     """
-    Get the min and max of the smallest array in a group
+    Get the 5th and 95th percentiles from of the smallest array in a multiscale group
     """
     group = zarr.open_group(image_url, mode="r")
     arrays_sorted = sorted(group.arrays(), key=lambda kv: np.prod(kv[1].shape))
@@ -297,7 +357,7 @@ def get_histogram_bounds(image_url: str) -> tuple[int, int]:
 
 
 def get_histogram_bounds_batch(group_urls: tuple[str, ...]):
-    return tuple(pool.map(get_histogram_bounds, group_urls))
+    return tuple(pool.map(get_percentiles, group_urls))
 
 
 def create_neuroglancer_state(
