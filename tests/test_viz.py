@@ -4,7 +4,7 @@ from matchviz import (
     get_tile_coords,
     load_points,
     ome_ngff_to_coords,
-    parse_bigstitcher_xml_from_s3,
+    read_bigstitcher_xml,
     parse_idmap,
     plot_points,
     save_annotations,
@@ -43,7 +43,7 @@ def test_viz(tmpdir):
 
 def test_save_points_tile():
     bs_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/"
-    bs_model = parse_bigstitcher_xml_from_s3(bs_url)
+    bs_model = read_bigstitcher_xml(bs_url)
     tile_name = "tile_x_0000_y_0000_z_0000_ch_488"
     alignment_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/interestpoints.n5/tpId_0_viewSetupId_0/"
     out_prefix = "points_out"

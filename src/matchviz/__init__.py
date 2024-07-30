@@ -53,12 +53,13 @@ def plot_points(points_df: pl.DataFrame, image_group_path: str):
     )
 
     loc_xyz = np.array(points_df["loc_xyz"].to_list())
+
     fig, axs = plt.subplots(ncols=2, nrows=2, dpi=200, figsize=(8, 8))
-    ds = 100
 
     dims = ("x", "y", "z")
     img = images_xarray["4"].drop_vars(("t", "c")).squeeze()
     pairs = ("z", "y"), None, ("z", "x"), ("x", "y")
+
     for idx, pair in enumerate(pairs):
         if pair is not None:
             plot_x, plot_y = sorted(pair)
@@ -76,16 +77,18 @@ def plot_points(points_df: pl.DataFrame, image_group_path: str):
             )
 
             axis.scatter(
-                loc_xyz[::ds, dims.index(plot_x)],
-                loc_xyz[::ds, dims.index(plot_y)],
+                loc_xyz[:, dims.index(plot_x)],
+                loc_xyz[:, dims.index(plot_y)],
                 marker="o",
+                facecolor="y",
+                edgecolor="y",
+                alpha=0.1,
             )
 
             axis.set_xlabel(plot_x)
             axis.set_ylabel(plot_y)
 
     fig.savefig("foo.svg")
-    breakpoint()
 
 
 def parse_idmap(data: dict[str, int]) -> dict[tuple[int, int, str], int]:
@@ -161,9 +164,10 @@ def image_name_to_tile_coord(image_name: str) -> TileCoordinate:
     return coords_out
 
 
-def parse_bigstitcher_xml_from_s3(base_url: str) -> SpimData2:
+def read_bigstitcher_xml(base_url: str) -> SpimData2:
     xml_url = os.path.join(base_url, "bigstitcher.xml")
-    bs_xml = S3FileSystem(anon=True).cat_file(xml_url)
+    fs, _ = fsspec.url_to_fs(xml_url)
+    bs_xml = fs.cat_file(xml_url)
     bs_model = SpimData2.from_xml(bs_xml)
     return bs_model
 
@@ -174,32 +178,57 @@ def get_tilegroup_s3_url(model: SpimData2) -> str:
     return os.path.join(f"s3://{bucket}", image_root_url)
 
 
-def translate_points(coords: Coords, points: np.ndarray):
+def translate_point(point: Sequence[float], params: Sequence[float]):
+    return np.add(point, params)
+
+
+def scale_point(point: Sequence[float], params: Sequence[float]):
+    return np.multiply(point, params)
+
+
+def translate_points(points_df: pl.DataFrame, coords: Coords):
     """
     Apply a translation
     """
-    # transform one column at a time
-    for idx, dim in enumerate(("x", "y", "z")):
-        local_scale = coords[dim]["scale"]  # type: ignore
-        local_trans = coords[dim]["translation"]  # type: ignore
-        points[:, idx] += local_trans / local_scale
+    col = "loc_xyz"
+    dims = ("x", "y", "z")
+    col_index = points_df.columns.index(col)
+    local_scale = [coords[dim]["scale"] for dim in dims]  # type: ignore
+    local_trans = [coords[dim]["translation"] for dim in dims]  # type: ignore
+
+    trans = np.divide(local_trans, local_scale)  # type: ignore
+    new_col = translate_point(points_df[col].to_list(), trans)
+
+    return points_df.clone().replace_column(
+        col_index, pl.Series(name=col, values=new_col.tolist())
+    )
 
 
-def scale_points(coords: Coords, points: np.ndarray):
-    # Apply a scaling to each point
-    for idx, dim in enumerate(("x", "y", "z")):
-        points[:, idx] *= coords[dim]["scale"]  # type: ignore
+def scale_points(points_df: pl.DataFrame, coords: Coords):
+    col = "loc_xyz"
+    dims = ("x", "y", "z")
+    col_index = points_df.columns.index(col)
+
+    scale = [coords[dim]["scale"] for dim in dims]  # type: ignore
+    new_col = scale_point(points_df[col].to_list(), scale)
+
+    return points_df.clone().replace_column(
+        col_index, pl.Series(name=col, values=new_col.tolist())
+    )
 
 
-def load_points(
-    interest_points_url: str, coords: Coords | None = None
-) -> tuple[pl.DataFrame, pl.DataFrame | None]:
+def transform_points(coords: Coords, points: np.ndarray):
+    translate_points(coords, points)
+    scale_points(coords, points)
+
+
+def load_points(url: str) -> tuple[pl.DataFrame, pl.DataFrame | None]:
     """
     Load interest points and optionally correspondences from a bigstitcher-formatted n5 group as
     polars dataframes.
     """
     logger = logging.getLogger(__name__)
-    store = zarr.N5FSStore(interest_points_url, mode="r")
+    store = zarr.N5FSStore(url, mode="r")
     interest_points_group = zarr.open_group(
         store=store, path="interestpoints", mode="r"
     )
@@ -224,18 +253,24 @@ def load_points(
     # points are saved as [num_points, [x, y, z]]
     loc = interest_points_group["loc"][:]
 
-    if coords is not None:
-        translate_points(coords, loc)
-
     ids = interest_points_group["id"][:]
     ids_list = ids.squeeze().tolist()
+
     if matches_exist:
         idmap_parsed = parse_idmap(correspondences_group.attrs["idMap"])
+        # get the self id, might not be robust
+        match = re.search(r"viewSetupId_(\d+)", url)
+        if match is None:
+            raise ValueError(f"Could not infer id_self from {url}")
+
+        id_self = int(match.group(1))
+
         # map from pair index to image id
         remap = {value: key[1] for key, value in idmap_parsed.items()}
 
         # matches are saved as [num_matches, [point_self, point_other, match_id]]
         matches = np.array(correspondences_group["data"])
+
         # replace the pair id value with an actual image index reference in the last column
         matches[:, -1] = np.vectorize(remap.get)(matches[:, -1])
 
@@ -243,6 +278,7 @@ def load_points(
             {
                 "point_self": matches[:, 0],
                 "point_other": matches[:, 1],
+                "id_self": [id_self] * matches.shape[0],
                 "id_other": matches[:, 2],
             }
         )
@@ -518,9 +554,9 @@ def save_annotations(
         new_name = f"tpId_0_viewSetupId_{img_id}"
         new_url = os.path.join(os.path.split(alignment_url)[0], new_name, "beads")
 
-        points_data, match_data = load_points(
-            interest_points_url=new_url, coords=tile_coords[img_id]
-        )
+        coords = tile_coords[img_id]
+        points_data, match_data = load_points(url=new_url)
+        points_data = translate_points(points_data, coords)
 
         points_map[img_id] = points_data
         matches_map[img_id] = match_data
