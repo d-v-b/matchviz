@@ -24,7 +24,7 @@ import fsspec
 from neuroglancer import ImageLayer, AnnotationLayer, ViewerState, CoordinateSpace
 from matchviz.neuroglancer_styles import NeuroglancerViewerStyle
 from functools import reduce
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from matplotlib import colors
 import matplotlib.pyplot as plt
 from xarray_ome_ngff import read_multiscale_group
@@ -164,10 +164,9 @@ def image_name_to_tile_coord(image_name: str) -> TileCoordinate:
     return coords_out
 
 
-def read_bigstitcher_xml(base_url: str) -> SpimData2:
-    xml_url = os.path.join(base_url, "bigstitcher.xml")
-    fs, _ = fsspec.url_to_fs(xml_url)
-    bs_xml = fs.cat_file(xml_url)
+def read_bigstitcher_xml(url: str) -> SpimData2:
+    fs, path = fsspec.url_to_fs(url)
+    bs_xml = fs.cat_file(path)
     bs_model = SpimData2.from_xml(bs_xml)
     return bs_model
 
@@ -193,8 +192,8 @@ def translate_points(points_df: pl.DataFrame, coords: Coords):
     col = "loc_xyz"
     dims = ("x", "y", "z")
     col_index = points_df.columns.index(col)
-    local_scale = [coords[dim]["scale"] for dim in dims]  # type: ignore
-    local_trans = [coords[dim]["translation"] for dim in dims]  # type: ignore
+    local_scale = [coords[dim]["scale"] for dim in dims]
+    local_trans = [coords[dim]["trans"] for dim in dims]
 
     trans = np.divide(local_trans, local_scale)  # type: ignore
     new_col = translate_point(points_df[col].to_list(), trans)
@@ -295,7 +294,7 @@ def ome_ngff_to_coords(url: str) -> Coords:
     scale = multi_meta.datasets[0].coordinateTransformations[0].scale
     trans = multi_meta.datasets[0].coordinateTransformations[1].translation
     return {
-        axis.name: {"scale": s, "translation": t}
+        axis.name: {"scale": s, "trans": t}
         for axis, s, t in zip(multi_meta.axes, scale, trans)
     }  # type: ignore
 
@@ -650,3 +649,85 @@ def tile_coordinate_to_rgba(coord: TileCoordinate) -> tuple[int, int, int, int]:
     }
 
     return lut[tuple(mod_map.values())]
+
+
+def summarize_match(match: pl.DataFrame) -> pl.DataFrame:
+    """
+    Summarize a dataframe of matches read from the bigstitcher n5 output by grouping by the id
+    """
+    return (
+        match.group_by("id_self", "id_other")
+        .agg(pl.col("point_self").count())
+        .rename({"point_self": "num_matches"})
+    )
+
+
+def summarize_matches(
+    bs_model: SpimData2, matches_dict: dict[str, pl.DataFrame]
+) -> pl.DataFrame:
+    individual = {k: summarize_match(v) for k, v in matches_dict.items()}
+    bs_image_names = tuple(
+        map(lambda v: v.rstrip("/").split("/")[-2], individual.keys())
+    )
+    tile_coords = get_tile_coords(bs_model)
+    coords_tokenized = tokenize_tile_coords(tile_coords)
+
+    # include the file name and the normalized tile coordinate to each column
+    individual_augmented = {}
+    for idx, kv in enumerate(individual.items()):
+        k, v = kv
+        individual_augmented[k] = v.with_columns(
+            bs_image_name=pl.lit(bs_image_names[idx]),
+            tile_coords_tokenized=pl.lit(coords_tokenized[idx]),
+        )
+    return pl.concat(individual_augmented.values()).sort("id_self")
+
+
+def tokenize(data: Sequence[float]) -> Sequence[int]:
+    uniques = sorted(np.unique(data).tolist())
+    return [uniques.index(d) for d in data]
+
+
+def fetch_all_matches(
+    n5_interest_points_url: str,
+) -> dict[str, pl.DataFrame | BaseException]:
+    """
+    Load all the match data from the n5 datasets containing it. Takes a url to an n5 group
+    emitted by bigstitcher for storing interest points, e.g.
+    s3://bucket/dataset/interestpoints.n5/.
+
+    This function uses a thread pool to speed things up.
+    """
+    fs, path = fsspec.url_to_fs(n5_interest_points_url)
+    all_beads = ("s3://" + v for v in fs.glob(os.path.join(path, "*/beads/")))
+
+    matches_dict = {}
+    futures_dict = {}
+
+    for bead_path in all_beads:
+        fut = pool.submit(load_points, bead_path)
+        futures_dict[fut] = bead_path
+
+    for result in as_completed(futures_dict):
+        key = futures_dict[result]
+        try:
+            _, matches = result.result()
+            matches_dict[key] = matches
+        except BaseException:
+            matches_dict = result.exception
+
+    return matches_dict
+
+
+def tokenize_tile_coords(tile_coords: dict[int, Coords]) -> tuple[tuple[int, int], ...]:
+    """
+    Convert positions in world coordinates to positions in a space where the only coordinates
+    allowed are tuples of integers.
+    """
+
+    tile_positions = {
+        k: (v["x"]["trans"], v["y"]["trans"]) for k, v in tile_coords.items()
+    }
+    tile_x, tile_y = zip(*tuple(t for t in tile_positions.values()))
+    tile_coords_normed = tuple(zip(tokenize(tile_x), tokenize(tile_y)))
+    return tile_coords_normed

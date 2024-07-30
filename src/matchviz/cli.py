@@ -34,7 +34,7 @@ def save_interest_points_cli(src: str, dest: str):
 
 
 def save_points(url: str, dest: str):
-    bs_model = read_bigstitcher_xml(url)
+    bs_model = read_bigstitcher_xml(os.path.join(url, "bigstitcher.xml"))
     save_interest_points(bs_model=bs_model, base_url=url, out_prefix=dest)
 
 
@@ -73,7 +73,7 @@ def save_neuroglancer_json(
     dest_path: str,
     style: NeuroglancerViewerStyle,
 ) -> str:
-    bs_model = read_bigstitcher_xml(alignment_url)
+    bs_model = read_bigstitcher_xml(os.path.join(alignment_url, "bigstitcher.xml"))
     tilegroup_s3_url = get_tilegroup_s3_url(bs_model)
     state = create_neuroglancer_state(
         image_url=tilegroup_s3_url, points_url=points_url, style=style
