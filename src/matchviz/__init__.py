@@ -23,6 +23,10 @@ import logging
 import fsspec
 from neuroglancer import ImageLayer, AnnotationLayer, ViewerState, CoordinateSpace
 from matchviz.neuroglancer_styles import NeuroglancerViewerStyle
+from functools import reduce
+from concurrent.futures import ThreadPoolExecutor
+
+pool = ThreadPoolExecutor(max_workers=16)
 
 OUT_PREFIX = "tile_alignment_visualization"
 
@@ -205,7 +209,7 @@ def get_tile_coords(bs_model: SpimData2) -> dict[int, Coords]:
     tile_coords: dict[int, Coords] = {}
     tilegroup_url = get_tilegroup_s3_url(bs_model)
     view_setup_dict: dict[str, ViewSetup] = {
-        v.ident: v for v in bs_model.sequence_description.view_setups.view_setup
+        v.ident: v for v in bs_model.sequence_description.view_setups.view_setups
     }
     for file in bs_model.view_interest_points.data:
         setup_id = file.setup
@@ -231,8 +235,9 @@ def save_interest_points(bs_model: SpimData2, base_url: str, out_prefix: str):
     """
 
     view_setup_dict: dict[int, ViewSetup] = {
-        int(v.ident): v for v in bs_model.sequence_description.view_setups.view_setup
+        int(v.ident): v for v in bs_model.sequence_description.view_setups.view_setups
     }
+
     # generate a coordinate grid for all the images
     tile_coords: dict[int, Coords] = get_tile_coords(bs_model=bs_model)
 
@@ -281,6 +286,20 @@ def get_url(node: zarr.Group | zarr.Array) -> str:
         raise ValueError(msg)
 
 
+def get_histogram_bounds(image_url: str) -> tuple[int, int]:
+    """
+    Get the min and max of the smallest array in a group
+    """
+    group = zarr.open_group(image_url, mode="r")
+    arrays_sorted = sorted(group.arrays(), key=lambda kv: np.prod(kv[1].shape))
+    smallest = arrays_sorted[0][1][:]
+    return np.percentile(smallest, (5, 95))
+
+
+def get_histogram_bounds_batch(group_urls: tuple[str, ...]):
+    return tuple(pool.map(get_histogram_bounds, group_urls))
+
+
 def create_neuroglancer_state(
     image_url: str,
     points_url: str,
@@ -305,15 +324,37 @@ def create_neuroglancer_state(
     state = ViewerState(
         dimensions=space, cross_section_scale=1000, projection_scale=500_000
     )
-    image_shader_controls = {"normalized": {"range": [0, 255], "window": [0, 255]}}
-    annotation_shader = r"void main(){setColor(prop_point_color());}"
 
-    for fname, sub_group in image_group.groups():
+    # read the smallest images in the pyramid
+    subgroups = tuple(image_group.groups())
+    subgroup_urls = tuple(get_url(g) for _, g in subgroups)
+    bounds = get_histogram_bounds_batch(subgroup_urls)
+    histogram_bounds = {k: v for k, v in zip(image_group.group_keys(), bounds)}
+
+    for fname, sub_group in subgroups:
+        subgroup_url = get_url(sub_group)
         point_dir = fname.removesuffix(".zarr") + ".precomputed"
         point_url = f"{points_url}/{point_dir}"
         if points_fs.exists(os.path.join(points_path, point_dir)):
-            image_sources[fname] = f"zarr://{get_url(sub_group)}"
+            image_sources[fname] = f"zarr://{subgroup_url}"
             points_sources[fname] = f"precomputed://{point_url}"
+
+    # bias the histogram towards the brighter values
+    hist_min, hist_max = reduce(
+        lambda old, new: (max(old[0], new[0]), max(old[1], new[1])),
+        histogram_bounds.values(),
+    )
+    window_min = int(hist_min) - abs(int(hist_min) - int(hist_max)) // 3
+    if window_min < 0:
+        window_min = 0
+    window_max = int(hist_max) + abs(int(hist_min) - int(hist_max)) // 3
+    image_shader_controls = {
+        "normalized": {
+            "range": [int(hist_min), int(hist_max)],
+            "window": [window_min, window_max],
+        }
+    }
+    annotation_shader = r"void main(){setColor(prop_point_color());}"
 
     if style == "images_split":
         for fname, im_source in image_sources.items():
@@ -382,8 +423,8 @@ def save_annotations(
     logger = logging.getLogger(__name__)
     logger.setLevel("INFO")
     logger.info(f"Saving annotations for image id {image_id}")
-    points_url = f"{out_prefix}/points/{tile_name}.precomputed"
-    lines_url = f"{out_prefix}/matches/{tile_name}.precomputed"
+    points_url = os.path.join(out_prefix, f"points/{tile_name}.precomputed")
+    lines_url = os.path.join(out_prefix, f"matches/{tile_name}.precomputed")
 
     # remove trailing slash
     alignment_url = alignment_url.rstrip("/")
