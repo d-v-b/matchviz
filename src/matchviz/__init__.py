@@ -335,7 +335,7 @@ def save_interest_points(bs_model: SpimData2, base_url: str, out_prefix: str):
     # generate a coordinate grid for all the images
     tile_coords: dict[int, Coords] = get_tile_coords(bs_model=bs_model)
     if bs_model.view_interest_points is None:
-        raise ValueError("No view interest points were found in the bigsti")
+        raise ValueError("No view interest points were found in the bigstitcher xml file.")
     for file in bs_model.view_interest_points.data:
         setup_id = int(file.setup)
         tile_name = view_setup_dict[setup_id].name
