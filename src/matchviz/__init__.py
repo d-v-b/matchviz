@@ -665,22 +665,49 @@ def summarize_match(match: pl.DataFrame) -> pl.DataFrame:
 def summarize_matches(
     bs_model: SpimData2, matches_dict: dict[str, pl.DataFrame]
 ) -> pl.DataFrame:
-    individual = {k: summarize_match(v) for k, v in matches_dict.items()}
+    
+    # convert absolute bead paths to bigstitcher image names
     bs_image_names = tuple(
-        map(lambda v: v.rstrip("/").split("/")[-2], individual.keys())
+        map(lambda v: v.rstrip("/").split("/")[-2], matches_dict.keys())
     )
-    tile_coords = get_tile_coords(bs_model)
-    coords_tokenized = tokenize_tile_coords(tile_coords)
+    viewsetup_ids = tuple(map(lambda v: int(v.split('viewSetupId_')[-1]), bs_image_names))
+    
+    # get base image metadata from bigstitcher xml
+    bs_view_setups_by_id = {int(k.ident): k for k in bs_model.sequence_description.view_setups.view_setups}
+
+    # polars dataframes keyed by bigstitcher image names
+    individual_summaries = {viewsetup_ids[index]: summarize_match(v) for index, v in enumerate(matches_dict.values())}
 
     # include the file name and the normalized tile coordinate to each column
     individual_augmented = {}
-    for idx, kv in enumerate(individual.items()):
+    for idx, kv in enumerate(individual_summaries.items()):
         k, v = kv
+
+        fname = bs_view_setups_by_id[k].name
+        tile_coord = image_name_to_tile_coord(fname)
         individual_augmented[k] = v.with_columns(
-            bs_image_name=pl.lit(bs_image_names[idx]),
-            tile_coords_tokenized=pl.lit(coords_tokenized[idx]),
+            x_self=pl.lit(tile_coord["x"]),
+            y_self=pl.lit(tile_coord["y"]),
+            z_self=pl.lit(tile_coord["z"]),
+            ch_self=pl.lit(tile_coord["ch"]),
+            x_other=pl.col('id_other').map_elements(lambda v: image_name_to_tile_coord(bs_view_setups_by_id[v].name)['x']),
+            y_other=pl.col('id_other').map_elements(lambda v: image_name_to_tile_coord(bs_view_setups_by_id[v].name)['y']),
+            z_other=pl.col('id_other').map_elements(lambda v: image_name_to_tile_coord(bs_view_setups_by_id[v].name)['z']),
+            ch_other=pl.col('id_other').map_elements(lambda v: image_name_to_tile_coord(bs_view_setups_by_id[v].name)['ch'])
         )
-    return pl.concat(individual_augmented.values()).sort("id_self")
+    return pl.concat(
+        individual_augmented.values()).select(
+            [pl.col('id_self'), 
+             pl.col('x_self'), 
+             pl.col('y_self'), 
+             pl.col('z_self'), 
+             pl.col('id_other'),
+             pl.col('x_other'), 
+             pl.col('y_other'), 
+             pl.col('z_other'),
+             pl.col('num_matches'),
+             ]
+        ).sort("id_self")
 
 
 def tokenize(data: Sequence[float]) -> Sequence[int]:
@@ -717,17 +744,3 @@ def fetch_all_matches(
             matches_dict = result.exception
 
     return matches_dict
-
-
-def tokenize_tile_coords(tile_coords: dict[int, Coords]) -> tuple[tuple[int, int], ...]:
-    """
-    Convert positions in world coordinates to positions in a space where the only coordinates
-    allowed are tuples of integers.
-    """
-
-    tile_positions = {
-        k: (v["x"]["trans"], v["y"]["trans"]) for k, v in tile_coords.items()
-    }
-    tile_x, tile_y = zip(*tuple(t for t in tile_positions.values()))
-    tile_coords_normed = tuple(zip(tokenize(tile_x), tokenize(tile_y)))
-    return tile_coords_normed
