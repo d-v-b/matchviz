@@ -3,7 +3,7 @@ import os
 from matchviz import (
     create_neuroglancer_state,
     get_tile_coords,
-    load_points,
+    load_points_tile,
     ome_ngff_to_coords,
     read_bigstitcher_xml,
     parse_idmap,
@@ -75,14 +75,14 @@ def test_parse_idmap():
 @pytest.mark.skip
 def test_load_points():
     url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/interestpoints.n5/tpId_0_viewSetupId_3/beads/"
-    points_df = load_points(url)
+    points_df = load_points_tile(url)
 
 
 def test_plot_points():
     url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/interestpoints.n5/tpId_0_viewSetupId_0/beads/"
     image_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38/SPIM.ome.zarr/tile_x_0000_y_0000_z_0000_ch_488.zarr"
     coords = ome_ngff_to_coords(image_url)
-    points_df, match_df = load_points(url, coords=coords)
+    points_df, match_df = load_points_tile(url, coords=coords)
     scale_points(points_df, coords)
     plot_points(points_df, image_url)
 

@@ -36,7 +36,8 @@ dependencies = [
   "tqdm==4.66.4",
   "numpy < 2",
   "matplotlib",
-  "xarray-ome-ngff"
+  "xarray-ome-ngff",
+  "structlog"
   ]
 
 [project.urls]

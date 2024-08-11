@@ -4,7 +4,6 @@ import os
 from click.testing import CliRunner
 from matchviz.cli import tabulate_matches_cli
 
-@pytest.mark.skip
 @pytest.mark.parametrize(
     "alignment_url",
     [
@@ -21,10 +20,6 @@ def test_save_points(tmpdir, alignment_url):
             alignment_url,
             "--dest",
             out_path,
-            "--ngjson",
-            "test.json",
-            "--nghost",
-            "http://localhost:3000",
         ]
     )
     assert run_result.returncode == 0

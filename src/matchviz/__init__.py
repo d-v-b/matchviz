@@ -3,9 +3,11 @@
 # SPDX-License-Identifier: MIT
 from __future__ import annotations
 
-from typing import Annotated, Literal, Sequence, cast
+import time
+from typing import Annotated, Any, Literal, Sequence, cast
 import neuroglancer.coordinate_space
 import numpy as np
+from yarl import URL
 import zarr
 import neuroglancer
 import os
@@ -13,31 +15,29 @@ from pydantic import BaseModel, BeforeValidator, Field
 from pydantic_zarr.v2 import GroupSpec, ArraySpec
 from pydantic_bigstitcher import SpimData2
 from pydantic_ome_ngff.v04.multiscale import MultiscaleMetadata
-from s3fs import S3FileSystem
 import re
 from typing_extensions import TypedDict
 import polars as pl
 from pydantic_bigstitcher import ViewSetup
 from matchviz.annotation import write_line_annotations, write_point_annotations
-import logging
 import fsspec
 from neuroglancer import ImageLayer, AnnotationLayer, ViewerState, CoordinateSpace
 from matchviz.neuroglancer_styles import NeuroglancerViewerStyle
 from functools import reduce
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 from matplotlib import colors
 import matplotlib.pyplot as plt
 from xarray_ome_ngff import read_multiscale_group
+import structlog
+from zarr.storage import BaseStore, LRUStoreCache
 
 pool = ThreadPoolExecutor(max_workers=16)
 
 OUT_PREFIX = "tile_alignment_visualization"
 
-
 class Tx(TypedDict):
     scale: float
     trans: float
-
 
 # we assume here that there's no need to parametrize t
 class Coords(TypedDict):
@@ -128,7 +128,6 @@ class PointsGroup(GroupSpec[InterestPointsGroupMeta, InterestPointsMembers]):
     members: InterestPointsMembers
     ...
 
-
 class TileCoordinate(TypedDict):
     x: int
     y: int
@@ -164,8 +163,8 @@ def image_name_to_tile_coord(image_name: str) -> TileCoordinate:
     return coords_out
 
 
-def read_bigstitcher_xml(url: str) -> SpimData2:
-    fs, path = fsspec.url_to_fs(url)
+def read_bigstitcher_xml(url: URL) -> SpimData2:
+    fs, path = fsspec.url_to_fs(str(url))
     bs_xml = fs.cat_file(path)
     bs_model = SpimData2.from_xml(bs_xml)
     return bs_model
@@ -220,13 +219,56 @@ def transform_points(coords: Coords, points: np.ndarray):
     translate_points(coords, points)
     scale_points(coords, points)
 
+def parse_matches(*, name: str, data: np.ndarray, id_map: dict[str, int]):
+    """
+    Convert a name, match data, and an id mapping to a polars dataframe that contains 
+    pairwise image matching information.
+    """
+    data_copy = data.copy()
 
-def load_points(url: str) -> tuple[pl.DataFrame, pl.DataFrame | None]:
+    # get the self id, might not be robust
+    match = re.search(r"viewSetupId_(\d+)", name)
+    if match is None:
+        raise ValueError(f"Could not infer id_self from {name}")
+
+    id_self = int(match.group(1))
+
+    # map from pair index to image id
+    remap = {value: key[1] for key, value in id_map.items()}
+
+    # replace the pair id value with an actual image index reference in the last column
+    data_copy[:, -1] = np.vectorize(remap.get)(data[:, -1])
+
+    match_result = pl.DataFrame(
+        {
+            "point_self": data_copy[:, 0],
+            "point_other": data_copy[:, 1],
+            "id_self": [id_self] * data_copy.shape[0],
+            "id_other": data_copy[:, 2],
+        }
+    )
+    return match_result
+
+def load_points_all(url: str) -> dict[str, tuple[pl.DataFrame, pl.DataFrame]]:
     """
     Load interest points and optionally correspondences from a bigstitcher-formatted n5 group as
-    polars dataframes.
+    polars dataframes for all tiles.
     """
-    logger = logging.getLogger(__name__)
+    raise NotImplementedError()
+    log = structlog.get_logger(url=url, name=__name__)
+
+    store = zarr.N5FSStore(url=url, mode='r')
+    stored = {}
+    for name, group in store.groups():
+        stored[name] = {''}
+
+def load_points_tile(url: str) -> tuple[pl.DataFrame, pl.DataFrame | None]:
+    """
+    Load interest points and optionally correspondences from a bigstitcher-formatted n5 group as
+    polars dataframes for a single tile.
+    """
+    log = structlog.get_logger()
+
     store = zarr.N5FSStore(url, mode="r")
     interest_points_group = zarr.open_group(
         store=store, path="interestpoints", mode="r"
@@ -247,7 +289,7 @@ def load_points(url: str) -> tuple[pl.DataFrame, pl.DataFrame | None]:
 
     matches_exist = "data" in correspondences_group
     if not matches_exist:
-        logger.info("No matches found.")
+        log.info(f"No matches found for {url}.")
 
     # points are saved as [num_points, [x, y, z]]
     loc = interest_points_group["loc"][:]
@@ -256,31 +298,9 @@ def load_points(url: str) -> tuple[pl.DataFrame, pl.DataFrame | None]:
     ids_list = ids.squeeze().tolist()
 
     if matches_exist:
-        idmap_parsed = parse_idmap(correspondences_group.attrs["idMap"])
-        # get the self id, might not be robust
-        match = re.search(r"viewSetupId_(\d+)", url)
-        if match is None:
-            raise ValueError(f"Could not infer id_self from {url}")
-
-        id_self = int(match.group(1))
-
-        # map from pair index to image id
-        remap = {value: key[1] for key, value in idmap_parsed.items()}
-
-        # matches are saved as [num_matches, [point_self, point_other, match_id]]
+        id_map = parse_idmap(correspondences_group.attrs["idMap"])
         matches = np.array(correspondences_group["data"])
-
-        # replace the pair id value with an actual image index reference in the last column
-        matches[:, -1] = np.vectorize(remap.get)(matches[:, -1])
-
-        match_result = pl.DataFrame(
-            {
-                "point_self": matches[:, 0],
-                "point_other": matches[:, 1],
-                "id_self": [id_self] * matches.shape[0],
-                "id_other": matches[:, 2],
-            }
-        )
+        match_result = parse_matches(name=url, data=matches, id_map=id_map)
     else:
         match_result = None
 
@@ -336,6 +356,7 @@ def save_interest_points(bs_model: SpimData2, base_url: str, out_prefix: str):
     tile_coords: dict[int, Coords] = get_tile_coords(bs_model=bs_model)
     if bs_model.view_interest_points is None:
         raise ValueError("No view interest points were found in the bigstitcher xml file.")
+        
     for file in bs_model.view_interest_points.data:
         setup_id = int(file.setup)
         tile_name = view_setup_dict[setup_id].name
@@ -343,17 +364,15 @@ def save_interest_points(bs_model: SpimData2, base_url: str, out_prefix: str):
         alignment_url = os.path.join(
             base_url, "interestpoints.n5", file.path.split("/")[0]
         )
-
         save_annotations(
-            image_id=setup_id,
-            tile_name=tile_name,
-            alignment_url=alignment_url,
-            out_prefix=out_prefix,
-            tile_coords=tile_coords,
-        )
+                image_id=setup_id, 
+                tile_name=tile_name, 
+                alignment_url=alignment_url,
+                out_prefix=out_prefix,
+                tile_coords=tile_coords
+                )
 
-
-def get_url(node: zarr.Group | zarr.Array) -> str:
+def get_url(node: zarr.Group | zarr.Array) -> URL:
     """
     Get a URL from a zarr array or group pointing to its location in storage
     """
@@ -372,7 +391,7 @@ def get_url(node: zarr.Group | zarr.Array) -> str:
             store_path = store.path.split("://")[-1]
         else:
             store_path = store.path
-        return f"{protocol}://{os.path.join(store_path, node.path)}"
+        return URL(f"{protocol}://{os.path.join(store_path, node.path)}")
     else:
         msg = (
             f"The store associated with this object has type {type(store)}, which "
@@ -397,12 +416,16 @@ def get_histogram_bounds_batch(group_urls: tuple[str, ...]):
 
 def create_neuroglancer_state(
     image_url: str,
-    points_url: str,
+    points_url: str | None,
+    matches_url: str | None,
     style: NeuroglancerViewerStyle,
 ):
+    log = structlog.get_logger()
+
     image_group = zarr.open_group(store=image_url, path="", mode="r")
     image_sources = {}
     points_sources = {}
+    matches_sources = {}
     space = CoordinateSpace(
         names=["z", "y", "x"],
         scales=[
@@ -414,31 +437,37 @@ def create_neuroglancer_state(
         ]
         * 3,
     )
-    points_fs, points_path = fsspec.url_to_fs(points_url)
-
+    
     state = ViewerState(
         dimensions=space, cross_section_scale=1000, projection_scale=500_000
     )
 
     # read the smallest images in the pyramid
     subgroups = tuple(image_group.groups())
-    subgroup_urls = tuple(get_url(g) for _, g in subgroups)
+    subgroup_urls = tuple(str(get_url(g)) for _, g in subgroups)
     bounds = get_histogram_bounds_batch(subgroup_urls)
     histogram_bounds = {k: v for k, v in zip(image_group.group_keys(), bounds)}
 
     for fname, sub_group in subgroups:
         subgroup_url = get_url(sub_group)
-        point_dir = fname.removesuffix(".zarr") + ".precomputed"
-        point_url = f"{points_url}/{point_dir}"
-        if points_fs.exists(os.path.join(points_path, point_dir)):
-            image_sources[fname] = f"zarr://{subgroup_url}"
+        image_sources[fname] = f"zarr://{subgroup_url}"
+
+        annotation_dir = fname.removesuffix(".zarr") + ".precomputed"
+        
+        if points_url is not None:
+            point_url = URL(points_url).joinpath(annotation_dir)
             points_sources[fname] = f"precomputed://{point_url}"
+        
+        if matches_url is not None:
+            match_url = URL(matches_url).joinpath(annotation_dir)
+            matches_sources[fname] = f"precomputed://{match_url}"
 
     # bias the histogram towards the brighter values
     hist_min, hist_max = reduce(
         lambda old, new: (max(old[0], new[0]), max(old[1], new[1])),
         histogram_bounds.values(),
     )
+    log.info(f'Using histogram bounded between ({hist_min}, {hist_max})')
     window_min = int(hist_min) - abs(int(hist_min) - int(hist_max)) // 3
     if window_min < 0:
         window_min = 0
@@ -449,11 +478,11 @@ def create_neuroglancer_state(
             "window": [window_min, window_max],
         }
     }
+
     annotation_shader = r"void main(){setColor(prop_point_color());}"
 
     if style == "images_split":
         for fname, im_source in image_sources.items():
-            point_source = points_sources[fname]
             coordinate = image_name_to_tile_coord(fname)
             name_base = f"x={coordinate['x']}, y={coordinate['y']}, z={coordinate['z']}, ch={coordinate['ch']}"
             color = tile_coordinate_to_rgba(coordinate)
@@ -472,10 +501,19 @@ def create_neuroglancer_state(
                     shader=shader,
                 ),
             )
-            state.layers.append(
-                name=f"{name_base}/geom",
-                layer=AnnotationLayer(source=point_source, shader=annotation_shader),
-            )
+            if points_url is not None:
+                point_source = points_sources[fname]
+                state.layers.append(
+                    name=f"{name_base}/points",
+                    layer=AnnotationLayer(source=point_source, shader=annotation_shader),
+                )
+            if matches_url is not None:
+                match_source = matches_sources[fname]
+                state.layers.append(
+                    name=f"{name_base}/matches",
+                    layer=AnnotationLayer(source=match_source, shader=annotation_shader),
+                )
+
     elif style == "images_combined":
         state.layers.append(
             name="images",
@@ -484,12 +522,20 @@ def create_neuroglancer_state(
                 shader_controls=image_shader_controls,
             ),
         )
-        state.layers.append(
-            name="points",
-            layer=AnnotationLayer(
-                source=list(points_sources.values()), shader=annotation_shader
-            ),
-        )
+        if points_url is not None:
+            state.layers.append(
+                name="points",
+                layer=AnnotationLayer(
+                    source=list(points_sources.values()), shader=annotation_shader
+                ),
+            )
+        if matches_url is not None:
+            state.layers.append(
+                name="matches",
+                layer=AnnotationLayer(
+                    source=list(matches_sources.values()), shader=annotation_shader
+                ),
+            )
     else:
         msg = f"Style {style} not recognized. Style must be one of 'images_combined' or 'images_split'"
         raise ValueError(msg)
@@ -515,15 +561,17 @@ def save_annotations(
     If matches are not point, then just the interest points will be saved.
     """
 
-    logger = logging.getLogger(__name__)
-    logger.setLevel("INFO")
-    logger.info(f"Saving annotations for image id {image_id}")
+    log = structlog.get_logger(tile_name=tile_name)
+    start = time.time()
+    log.info(f"Begin saving annotations for image id {image_id}")
     points_url = os.path.join(out_prefix, f"points/{tile_name}.precomputed")
     lines_url = os.path.join(out_prefix, f"matches/{tile_name}.precomputed")
-
+    log.info(f'Saving points to {points_url}')
+    log.info(f'Saving matches to {lines_url}')
     # remove trailing slash
     alignment_url = alignment_url.rstrip("/")
     alignment_store = zarr.N5FSStore(alignment_url)
+
     base_coords = tile_coords[image_id]
 
     match_group = zarr.open_group(
@@ -539,13 +587,15 @@ def save_annotations(
     matches_exist = "data" in match_group
 
     if matches_exist:
+        log.info('Found matches.')
         id_map = parse_idmap(match_group.attrs.asdict()["idMap"])
         # the idMap attribute uses 0 instead of the actual setup id for the self in this metadata.
         # normalizing replaces that 0 with the actual setup id.
         id_map_normalized = {
             (image_id, *key[1:]): value for key, value in id_map.items()
         }
-
+    else:
+        log.info('No matches found.')
     for key in id_map_normalized:
         to_access += (key[1],)
 
@@ -554,7 +604,7 @@ def save_annotations(
         new_url = os.path.join(os.path.split(alignment_url)[0], new_name, "beads")
 
         coords = tile_coords[img_id]
-        points_data, match_data = load_points(url=new_url)
+        points_data, match_data = load_points_tile(url=new_url, )
         points_data = translate_points(points_data, coords)
 
         points_map[img_id] = points_data
@@ -584,12 +634,13 @@ def save_annotations(
         point_color=point_color,
     )
     if matches_map[image_id] is not None:
+        log.info(f'Saving matches to {lines_url}.')
         match_entry = matches_map[image_id]
         if match_entry is None:
             raise ValueError(f"Missing match data for {image_id}")
         match_entry = cast(pl.DataFrame, match_entry)
         for row in match_entry.rows():
-            point_self, point_other, id_other = row
+            point_self, point_other, id_self, id_other = row
             row_self = point_map_self.row(
                 by_predicate=(pl.col("id") == point_self), named=True
             )
@@ -600,7 +651,7 @@ def save_annotations(
             if len(line_start) != 4:
                 msg = f"Wrong number of elements in line_start ({len(line_start)})"
                 raise ValueError(msg)
-            line_start = cast(tuple[float, float, float], line_start)
+            line_start = cast(tuple[float, float, float, float], line_start)
             try:
                 row_other = points_map[id_other].row(
                     by_predicate=(pl.col("id") == point_other), named=True
@@ -611,10 +662,10 @@ def save_annotations(
                 )  # add a 0 for the time coordinate
                 if len(line_stop) != 4:
                     msg = f"Wrong number of elements in line_start ({len(line_start)})"
-                line_stop = cast(tuple[float, float, float], line_stop)
+                line_stop = cast(tuple[float, float, float, float], line_stop)
 
             except pl.exceptions.NoRowsReturnedError:
-                logger.info(f"indexing error with {point_other} into vs_id {id_other}")
+                log.info(f"indexing error with {point_other} into vs_id {id_other}")
                 line_stop = line_start
 
             line_starts.append(line_start)
@@ -627,7 +678,7 @@ def save_annotations(
             coordinate_space=annotation_space,
             point_color=point_color,
         )
-
+    log.info(f'Completed saving points / matches after {time.time() - start:0.4f}s.')
 
 def tile_coordinate_to_rgba(coord: TileCoordinate) -> tuple[int, int, int, int]:
     """
@@ -732,7 +783,7 @@ def fetch_all_matches(
     futures_dict = {}
 
     for bead_path in all_beads:
-        fut = pool.submit(load_points, bead_path)
+        fut = pool.submit(load_points_tile, bead_path)
         futures_dict[fut] = bead_path
 
     for result in as_completed(futures_dict):
