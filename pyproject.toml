@@ -24,15 +24,14 @@ classifiers = [
 ]
 dependencies = [
   "zarr==2.18", 
-  "tensorstore==0.1.60", 
+  "tensorstore==0.1.62", 
   "fsspec[s3]==2024.3.1", 
   "neuroglancer==2.39.2", 
-  "pydantic-bigstitcher==0.0.7", 
+  "pydantic-bigstitcher==0.0.8", 
   "pydantic-zarr==0.7.0",
   "click==8.1.7",
   "polars==0.20",
   "tqdm==4.66.4",
-  "numpy < 3",
   "matplotlib",
   "xarray-ome-ngff>= 3.1.1, < 4",
   "structlog >= 24.4.0, <25"

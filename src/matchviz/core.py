@@ -136,6 +136,18 @@ def tokenize(data: Sequence[float]) -> Sequence[int]:
     uniques = sorted(np.unique(data).tolist())
     return [uniques.index(d) for d in data]
 
+def tokenize_tile_coords(tile_coords: dict[int, Coords]) -> tuple[tuple[int, int], ...]:
+    """
+    Convert positions in world coordinates to positions in a space where the only coordinates
+    allowed are tuples of integers.
+    """
+
+    tile_positions = {
+        k: (v["x"]["trans"], v["y"]["trans"]) for k, v in tile_coords.items()
+    }
+    tile_x, tile_y = zip(*tuple(t for t in tile_positions.values()))
+    tile_coords_normed = tuple(zip(tokenize(tile_x), tokenize(tile_y)))
+    return tile_coords_normed
 
 def parse_url(data: object) -> URL:
     """

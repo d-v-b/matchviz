@@ -36,10 +36,10 @@ def plot_points(points_df: pl.DataFrame, image_group_path: str):
 
     dims = ("x", "y", "z")
     img = images_xarray["4"].drop_vars(("t", "c")).squeeze()
-    pairs = ("z", "y"), None, ("z", "x"), ("x", "y")
+    pairs = ("z", "y"), (), ("z", "x"), ("x", "y")
 
     for idx, pair in enumerate(pairs):
-        if pair is not None:
+        if pair != ():
             plot_x, plot_y = sorted(pair)
             axis = axs.ravel()[idx]
             proj_dim = tuple(set(dims) - set(pair))[0]

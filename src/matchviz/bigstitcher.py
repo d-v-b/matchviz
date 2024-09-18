@@ -14,6 +14,7 @@ from matchviz.core import (
     ome_ngff_to_coords,
     parse_url,
     tile_coordinate_to_rgba,
+    tokenize_tile_coords,
     translate_points,
 )
 from matchviz.types import Coords, TileCoordinate
@@ -38,13 +39,13 @@ def read_bigstitcher_xml(url: URL) -> SpimData2:
 
 
 def get_tilegroup_url(model: SpimData2) -> URL:
+    breakpoint()
     if hasattr(model.sequence_description.image_loader, "s3bucket"):
         bucket = model.sequence_description.image_loader.s3bucket
         image_root_path = model.sequence_description.image_loader.zarr.path
         return URL.build(scheme="s3", authority=bucket, path=image_root_path)
     else:
-        raise ValueError("This got a spimdata model that does not refer to data on s3.")
-
+        return URL(model.sequence_description.image_loader.n5.path)
 
 def image_name_to_tile_coord(image_name: str) -> TileCoordinate:
     coords = {}
@@ -187,7 +188,7 @@ def get_tile_coords(bs_model: SpimData2) -> dict[int, Coords]:
     view_setup_dict: dict[str, ViewSetup] = {
         v.ident: v for v in bs_model.sequence_description.view_setups.view_setups
     }
-
+    # TODO: don't hard-code zarr stuff in here, lets use the bigsticher metadata itself instead.
     for file in bs_model.view_interest_points.data:
         setup_id = file.setup
         tile_name = view_setup_dict[setup_id].name
@@ -413,8 +414,12 @@ def summarize_matches(
     bs_model: SpimData2, matches_dict: dict[str, pl.DataFrame]
 ) -> pl.DataFrame:
     # convert absolute bead paths to bigstitcher image names
+    
+    tile_coords = get_tile_coords(bs_model)
+    coords_tokenized = tokenize_tile_coords(tile_coords)
+    
     bs_image_names = tuple(
-        map(lambda v: v.rstrip("/").split("/")[-2], matches_dict.keys())
+        map(lambda v: v.parts[-2], matches_dict.keys())
     )
     viewsetup_ids = tuple(
         map(lambda v: int(v.split("viewSetupId_")[-1]), bs_image_names)
@@ -433,28 +438,11 @@ def summarize_matches(
 
     # include the file name and the normalized tile coordinate to each column
     individual_augmented = {}
-    for idx, kv in enumerate(individual_summaries.items()):
-        k, v = kv
 
-        fname = bs_view_setups_by_id[k].name
-        tile_coord = image_name_to_tile_coord(fname)
+    for idx, (k, v) in enumerate(individual_summaries.items()):
         individual_augmented[k] = v.with_columns(
-            x_self=pl.lit(tile_coord["x"]),
-            y_self=pl.lit(tile_coord["y"]),
-            z_self=pl.lit(tile_coord["z"]),
-            ch_self=pl.lit(tile_coord["ch"]),
-            x_other=pl.col("id_other").map_elements(
-                lambda v: image_name_to_tile_coord(bs_view_setups_by_id[v].name)["x"]
-            ),
-            y_other=pl.col("id_other").map_elements(
-                lambda v: image_name_to_tile_coord(bs_view_setups_by_id[v].name)["y"]
-            ),
-            z_other=pl.col("id_other").map_elements(
-                lambda v: image_name_to_tile_coord(bs_view_setups_by_id[v].name)["z"]
-            ),
-            ch_other=pl.col("id_other").map_elements(
-                lambda v: image_name_to_tile_coord(bs_view_setups_by_id[v].name)["ch"]
-            ),
+            image_name=pl.lit(bs_image_names[idx],
+            tile_coords = pl.lit(coords_tokenized[idx]))
         )
     return (
         pl.concat(individual_augmented.values())
@@ -476,17 +464,18 @@ def summarize_matches(
 
 
 def fetch_all_matches(
-    n5_interest_points_url: URL, pool: ThreadPoolExecutor
+    n5_interest_points_url: URL, 
+    pool: ThreadPoolExecutor
 ) -> dict[str, pl.DataFrame | BaseException | None]:
     """
-    Load all the match data from the n5 datasets containing it. Takes a url to an n5 group
-    emitted by bigstitcher for storing interest points, e.g.
+    Load all the match data from the n5 datasets containing it. 
+    Takes a URL to an n5 group emitted by bigstitcher for storing interest points, e.g.
     s3://bucket/dataset/interestpoints.n5/.
 
     This function uses a thread pool to speed things up.
     """
-    fs, path = fsspec.url_to_fs(str(n5_interest_points_url))
-    all_beads = ("s3://" + v for v in fs.glob(os.path.join(path, "*/beads/")))
+    fs, path = fsspec.url_to_fs(str(str(n5_interest_points_url)))
+    all_beads = (n5_interest_points_url.with_path(v) for v in fs.glob(os.path.join(path, "*/*")))
 
     matches_dict: dict[str, pl.DataFrame | BaseException | None] = {}
     futures_dict = {}

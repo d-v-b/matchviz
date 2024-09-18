@@ -149,6 +149,8 @@ def tabulate_matches_cli(
         interest_points_url = URL(interest_points)
 
     all_matches = fetch_all_matches(interest_points_url, pool)
+    if len(all_matches) == 0:
+        raise ValueError('No matches found!')
     valid_matches = {}
     for key, value in all_matches.items():
         if isinstance(value, BaseException):
