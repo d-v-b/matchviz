@@ -7,7 +7,7 @@ name = "matchviz"
 dynamic = ["version"]
 description = ''
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = "MIT"
 keywords = []
 authors = [
@@ -16,7 +16,6 @@ authors = [
 classifiers = [
   "Development Status :: 4 - Beta",
   "Programming Language :: Python",
-  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
@@ -30,14 +29,13 @@ dependencies = [
   "neuroglancer==2.39.2", 
   "pydantic-bigstitcher==0.0.7", 
   "pydantic-zarr==0.7.0",
-  "pydantic-ome-ngff==0.5.0",
   "click==8.1.7",
   "polars==0.20",
   "tqdm==4.66.4",
-  "numpy < 2",
+  "numpy < 3",
   "matplotlib",
-  "xarray-ome-ngff",
-  "structlog"
+  "xarray-ome-ngff>= 3.1.1, < 4",
+  "structlog >= 24.4.0, <25"
   ]
 
 [project.urls]
@@ -72,7 +70,7 @@ cov = [
 ]
 
 [[tool.hatch.envs.test.matrix]]
-python = ["3.9"]
+python = ["3.10"]
 
 [tool.hatch.envs.types]
 dependencies = [

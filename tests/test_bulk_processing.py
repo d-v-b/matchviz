@@ -1,6 +1,6 @@
 import os
-from matchviz.cli import save_points, save_neuroglancer_json, html_report
-from matchviz import OUT_PREFIX
+from matchviz.cli import save_points, save_neuroglancer_json
+
 from s3fs import S3FileSystem
 import pytest
 
@@ -8,30 +8,22 @@ fs = S3FileSystem()
 bucket = "aind-open-data"
 alignments = fs.glob(os.path.join(bucket, "exaSPIM_*alignment*"))
 
+OUT_PREFIX = "tile_alignment_visualization"
 
-def test_create_urls():
+
+def test_create_urls(tmpdir):
     dset = "exaSPIM_704523_2024-05-03_11-03-13_alignment_2024-05-23_22-32-43"
-    align_url = f"s3://aind-open-data/{dset}"
+    align_url = f"s3://aind-open-data/{dset}/bigstitcher.xml"
     _ = os.path.join(align_url, OUT_PREFIX)
     styles = "images_combined", "images_split"
     for style in styles:
         save_neuroglancer_json(
-            alignment_url=align_url,
+            bigstitcher_xml=align_url,
             points_url=os.path.join(align_url, OUT_PREFIX, "points"),
-            dest_path=os.path.join(align_url, OUT_PREFIX, "neuroglancer"),
+            matches_url=os.path.join(align_url, OUT_PREFIX, "matches"),
+            dest_url=str(tmpdir),
             style=style,
         )
-
-
-def test_create_html():
-    dset = "exaSPIM_704523_2024-05-03_11-03-13_alignment_2024-05-23_22-32-43"
-    align_url = f"s3://aind-open-data/{dset}/{OUT_PREFIX}/"
-    html_report(
-        dest_url=os.path.join(align_url, "report.html"),
-        ngjson_url=os.path.join(align_url, "neuroglancer"),
-        header=dset,
-        title=dset,
-    )
 
 
 @pytest.mark.skip

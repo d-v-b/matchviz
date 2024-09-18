@@ -1,28 +1,37 @@
 from __future__ import annotations
-import os
+from concurrent.futures import ThreadPoolExecutor
 import json
 from typing import Literal, Sequence
 import click
 import fsspec
+import fsspec.implementations
+import fsspec.implementations.local
 from yarl import URL
 from matchviz import (
     create_neuroglancer_state,
+)
+from matchviz.bigstitcher import (
     fetch_all_matches,
-    get_tilegroup_s3_url,
+    get_tilegroup_url,
     read_bigstitcher_xml,
     save_interest_points,
     summarize_matches,
 )
+from matchviz.core import parse_url
 from matchviz.neuroglancer_styles import (
     NeuroglancerViewerStyle,
     neuroglancer_view_styles,
 )
 import structlog
+from s3fs import S3FileSystem
+
 
 @click.group("matchviz")
 def cli(): ...
 
-log_level = click.option('--log-level', type=click.STRING, default='info')
+
+log_level = click.option("--log-level", type=click.STRING, default="info")
+
 
 @cli.command("save-points")
 @click.option("--src", type=click.STRING, required=True)
@@ -32,24 +41,26 @@ def save_interest_points_cli(src: str, dest: str):
     Save bigstitcher interest points from n5 to neuroglancer precomputed annotations.
     """
     # strip trailing '/' from src and dest
-    src_parsed = src.rstrip("/")
-    dest_parsed = dest.rstrip("/")
-    save_points(url=src_parsed, dest=dest_parsed)
+    src_parsed = URL(src.rstrip("/"))
+    dest_parsed = URL(dest.rstrip("/"))
+    save_points(bigstitcher_url=src_parsed, dest=dest_parsed)
 
 
-def save_points(url: str, dest: str):
-    bs_model = read_bigstitcher_xml(os.path.join(url, "bigstitcher.xml"))
-    save_interest_points(bs_model=bs_model, base_url=url, out_prefix=dest)
+def save_points(bigstitcher_url: URL, dest: URL):
+    bs_model = read_bigstitcher_xml(bigstitcher_url)
+    save_interest_points(
+        bs_model=bs_model, alignment_url=bigstitcher_url.parent, dest=dest
+    )
 
 
 @cli.command("ngjson")
-@click.option("--alignment-url", type=click.STRING, required=True)
-@click.option("--points-url", type=click.STRING)
-@click.option("--matches-url", type=click.STRING)
+@click.option("--bigstitcher-xml", type=click.STRING, required=True)
+@click.option("--points-url", type=click.STRING, default=None)
+@click.option("--matches-url", type=click.STRING, default=None)
 @click.option("--dest-path", type=click.STRING, required=True)
 @click.option("--style", type=click.STRING, multiple=True)
 def save_neuroglancer_json_cli(
-    alignment_url: str,
+    bigstitcher_xml: str,
     dest_path: str,
     points_url: str | None,
     matches_url: str | None,
@@ -58,8 +69,8 @@ def save_neuroglancer_json_cli(
     """
     Generate a neuroglancer viewer state as a JSON document.
     """
-    log = structlog.get_logger(__name__)
-    alignment_url_parsed = URL(alignment_url)
+    log = structlog.get_logger()
+    bigstitcher_xml_url = URL(bigstitcher_xml)
     if points_url is not None:
         points_url_parsed = URL(points_url)
     else:
@@ -75,8 +86,8 @@ def save_neuroglancer_json_cli(
         style = neuroglancer_view_styles
     for _style in style:
         out_path = save_neuroglancer_json(
-            alignment_url=alignment_url_parsed,
-            dest_path=dest_path_parsed,
+            bigstitcher_xml=bigstitcher_xml_url,
+            dest_url=dest_path_parsed,
             points_url=points_url_parsed,
             matches_url=matches_url_parsed,
             style=_style,
@@ -86,50 +97,68 @@ def save_neuroglancer_json_cli(
 
 def save_neuroglancer_json(
     *,
-    alignment_url: str,
-    points_url: str | None,
-    matches_url: str | None,
-    dest_path: str,
+    bigstitcher_xml: str | URL,
+    points_url: str | URL | None,
+    matches_url: str | URL | None,
+    dest_url: str | URL,
     style: NeuroglancerViewerStyle,
-) -> str:
-    bs_model = read_bigstitcher_xml(alignment_url.joinpath("bigstitcher.xml"))
-    tilegroup_s3_url = get_tilegroup_s3_url(bs_model)
+) -> URL:
+    bs_xml_parsed = parse_url(bigstitcher_xml)
+    points_url_parsed = parse_url(points_url)
+    matches_url_parsed = parse_url(matches_url)
+    dest_url_parsed = parse_url(dest_url)
+    bs_model = read_bigstitcher_xml(bs_xml_parsed)
+    tilegroup_s3_url = get_tilegroup_url(bs_model)
     state = create_neuroglancer_state(
-        image_url=tilegroup_s3_url, points_url=points_url, matches_url = matches_url, style=style
+        image_url=tilegroup_s3_url,
+        points_url=points_url_parsed,
+        matches_url=matches_url_parsed,
+        style=style,
     )
     out_fname = f"{style}.json"
-    out_path = os.path.join(dest_path, out_fname)
-    if dest_path.startswith("s3://"):
-        fs, _ = fsspec.url_to_fs(dest_path)
+    out_path = dest_url_parsed.joinpath(out_fname)
+
+    if dest_url_parsed.scheme == "s3":
+        fs = S3FileSystem()
     else:
-        fs, _ = fsspec.url_to_fs(dest_path, auto_mkdir=True)
+        fs = fsspec.implementations.local.LocalFileSystem(auto_mkdir=True)
 
     with fs.open(out_path, mode="w") as fh:
         fh.write(json.dumps(state.to_json(), indent=2))
 
     return out_path
 
-@cli.command('tabulate-matches')
-@click.option('--alignment-url', type=click.STRING, required=True)
-@click.option('--output', type=click.STRING, default='csv')
-def tabulate_matches_cli(alignment_url: str, output: Literal['csv'] | None):
+
+@cli.command("tabulate-matches")
+@click.option("--bigstitcher-xml", type=click.STRING, required=True)
+@click.option("--interest-points", type=click.STRING, default=None)
+@click.option("--output", type=click.STRING, default="csv")
+def tabulate_matches_cli(
+    bigstitcher_xml: str, interest_points: str | None, output: Literal["csv"] | None
+):
     """
-    Generate a tabular representation of the correspondence metadata generated by bigstitcher. 
+    Generate a tabular representation of the correspondence metadata generated by bigstitcher.
     """
-    log = structlog.get_logger(__name__)
-    bs_model = read_bigstitcher_xml(os.path.join(alignment_url, "bigstitcher.xml"))
-    interest_points_url = os.path.join(alignment_url, 'interestpoints.n5/')
-    all_matches = fetch_all_matches(interest_points_url)
+    pool = ThreadPoolExecutor(max_workers=16)
+    log = structlog.get_logger()
+    bigstitcher_xml_url = URL(bigstitcher_xml)
+    bs_model = read_bigstitcher_xml(bigstitcher_xml_url)
+    if interest_points is None:
+        interest_points_url = bigstitcher_xml_url.parent.joinpath("interestpoints.n5")
+    else:
+        interest_points_url = URL(interest_points)
+
+    all_matches = fetch_all_matches(interest_points_url, pool)
     valid_matches = {}
     for key, value in all_matches.items():
         if isinstance(value, BaseException):
-            msg = f'An exception occurred when accessing {key}: {value.msg}'
-            log.info(msg)
+            log.info(f"An exception occurred when accessing {key}")
+            log.exception(value)
         else:
             valid_matches[key] = value
-    
+
     summarized = summarize_matches(bs_model=bs_model, matches_dict=valid_matches)
-    if output == 'csv':
+    if output == "csv":
         click.echo(summarized.write_csv())
     else:
         raise ValueError(f'Format {output} is not recognized. Allowed values: ("csv",)')
