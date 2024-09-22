@@ -57,7 +57,7 @@ def test_save_points_tile(tmpdir):
     save_annotations(
         image_id=0,
         tile_name=tile_name,
-        alignment_url=alignment_url,
+        interest_points=alignment_url,
         dest_url=str(tmpdir),
         tile_coords=tile_coords,
     )

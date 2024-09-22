@@ -1,9 +1,10 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 import os
 import re
 import time
 from typing import Annotated, cast, TYPE_CHECKING
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, deprecated
 
 from pydantic import BaseModel, BeforeValidator, Field
 from pydantic_zarr.v2 import ArraySpec, GroupSpec
@@ -37,6 +38,13 @@ def read_bigstitcher_xml(url: URL) -> SpimData2:
     bs_model = SpimData2.from_xml(bs_xml)
     return bs_model
 
+# TODO: use this instead of the raw tuple
+@dataclass(frozen=True)
+class IdMap:
+    id_self: int
+    id_other: int
+    matches_path: str
+
 
 def get_tilegroup_url(model: SpimData2) -> URL:
     breakpoint()
@@ -45,8 +53,10 @@ def get_tilegroup_url(model: SpimData2) -> URL:
         image_root_path = model.sequence_description.image_loader.zarr.path
         return URL.build(scheme="s3", authority=bucket, path=image_root_path)
     else:
+        # this will be a relative URL
         return URL(model.sequence_description.image_loader.n5.path)
 
+@deprecated('This functionality is deprecated. Use image metadata or the bigstitcher xml file instead.')
 def image_name_to_tile_coord(image_name: str) -> TileCoordinate:
     coords = {}
     for index_str in ("x", "y", "z", "ch"):
@@ -74,6 +84,7 @@ def parse_idmap(data: dict[str, int]) -> dict[tuple[int, int, str], int]:
     return dict(zip(parts_normalized, data.values()))
 
 
+@deprecated('This functionality is deprecated. Use image metadata or the bigstitcher xml file instead.')
 def tile_coord_to_image_name(coord: TileCoordinate) -> str:
     """
     {'x': 0, 'y': 0, 'ch': 561'} -> "tile_x_0000_y_0002_z_0000_ch_488.zarr/"
@@ -100,7 +111,9 @@ def load_points_all(url: str) -> dict[str, tuple[pl.DataFrame, pl.DataFrame]]:
 
 
 def parse_matches(
-    *, name: str, data: np.ndarray, id_map: dict[tuple[int, int, str], int]
+    *, name: str, 
+    data: np.ndarray, 
+    id_map: dict[tuple[int, int, str], int]
 ):
     """
     Convert a name, match data, and an id mapping to a polars dataframe that contains
@@ -229,7 +242,7 @@ def save_annotations(
     *,
     image_id: int,
     tile_name: str,
-    alignment_url: URL | str,
+    interest_points: URL | str,
     dest_url: URL | str,
     tile_coords: dict[int, Coords],
 ):
@@ -251,17 +264,17 @@ def save_annotations(
     dest_url_parsed = parse_url(dest_url)
     points_url = dest_url_parsed.joinpath(f"points/{tile_name}.precomputed")
     lines_url = dest_url_parsed.joinpath(f"matches/{tile_name}.precomputed")
-    alignment_url_parsed = parse_url(alignment_url)
+    interest_points_url_parsed = parse_url(interest_points)
 
     log.info(f"Saving points to {points_url}")
     log.info(f"Saving matches to {lines_url}")
     # remove trailing slash
-    alignment_store = zarr.N5FSStore(str(alignment_url_parsed).rstrip("/"))
+    alignment_store = zarr.N5FSStore(str(interest_points_url_parsed).rstrip("/"))
 
     base_coords = tile_coords[image_id]
 
     match_group = zarr.open_group(
-        store=alignment_store, path="beads/correspondences", mode="r"
+        store=alignment_store, path="correspondences", mode="r"
     )
 
     to_access: tuple[int, ...] = (image_id,)
@@ -287,7 +300,8 @@ def save_annotations(
 
     for img_id in to_access:
         new_name = f"tpId_0_viewSetupId_{img_id}"
-        new_url = alignment_url_parsed.parent.joinpath(new_name, "beads")
+        *keep_pre, replace, keep_post = interest_points_url_parsed.parts
+        new_url = URL('/'.join([*keep_pre, new_name, keep_post]))
         coords = tile_coords[img_id]
         points_data, match_data = load_points_tile(url=new_url)
         points_data = translate_points(points_data, coords)
@@ -393,7 +407,7 @@ def save_interest_points(*, bs_model: SpimData2, alignment_url: URL, dest: URL):
         save_annotations(
             image_id=setup_id,
             tile_name=tile_name,
-            alignment_url=_alignment_url,
+            interest_points=_alignment_url,
             dest_url=dest,
             tile_coords=tile_coords,
         )
