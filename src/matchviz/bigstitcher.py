@@ -1,7 +1,7 @@
 from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-import os
+from pydantic_bigstitcher.transforms import Transform
 import re
 import time
 from typing import Annotated, cast, TYPE_CHECKING
@@ -187,10 +187,8 @@ def load_points_tile(url: str | URL, anon: bool = True) -> tuple[pl.DataFrame, p
         match_result = parse_matches(name=url_parsed, data=matches, id_map=id_map)
     else:
         match_result = None
-
     return pl.DataFrame({"id": ids_list, "loc_xyz": loc}), match_result
 
-from pydantic_bigstitcher.transforms import Transform
 
 def get_tile_coords(bs_model: SpimData2, nominal_grid=True) -> dict[int, Coords]:
     """
@@ -201,13 +199,17 @@ def get_tile_coords(bs_model: SpimData2, nominal_grid=True) -> dict[int, Coords]
     transforms_by_view_setups: dict[int, tuple[Transform, ...]] = {}
     for vs, vr in zip(bs_model.sequence_description.view_setups.view_setups, bs_model.view_registrations.elements):
         transforms = tuple(v.to_transform() for v in vr.view_transforms)
-        translation_array = np.array(tuple(tuple(t.transform.translation.values()) for t in transforms))
+        # note that we reverse the order of the transformations, because bigsticher appends new transformations 
+        # to the front of the list, but we want to iterate with the first applied transform first.
+        translation_array = np.array(tuple(tuple(t.transform.translation.values()) for t in reversed(transforms)))
+        translation_array_summed = np.cumsum(translation_array, axis=0)
         if nominal_grid:
-            for row in translation_array[::-1]:
+            for row in translation_array_summed:
                 if not np.all(row == 0):
                     final_translation=row
+                    break
         else:
-            final_translation = translation_array.sum(0)        
+            final_translation = translation_array_summed[-1]        
 
         transforms_by_view_setups[int(vs.ident)] = {'z': final_translation[2], 'y': final_translation[1], 'x': final_translation[0]}
     return transforms_by_view_setups
