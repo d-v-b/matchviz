@@ -7,7 +7,7 @@ from yarl import URL
 import pathlib
 
 import os
-from typing import Literal, Sequence
+from typing import Iterable, Literal, Sequence
 
 from matchviz.types import Coords, TileCoordinate
 
@@ -143,11 +143,15 @@ def tokenize_tile_coords(tile_coords: dict[int, Coords]) -> tuple[tuple[int, int
     """
 
     tile_positions = {
-        k: (v["x"]["trans"], v["y"]["trans"]) for k, v in tile_coords.items()
+        k: (v["x"], v["y"], v["z"]) for k, v in tile_coords.items()
     }
-    tile_x, tile_y = zip(*tuple(t for t in tile_positions.values()))
-    tile_coords_normed = tuple(zip(tokenize(tile_x), tokenize(tile_y)))
+    tile_x, tile_y, tile_z = zip(*tuple(t for t in tile_positions.values()))
+    tile_coords_normed = zip(*map(tokenize, (tile_x, tile_y, tile_z)))
     return tile_coords_normed
+
+def tokenize_translations(translations: Iterable[tuple[float, ...]]) -> Iterable[tuple[float, ...]]:
+    dims = np.array(tuple(translations))
+    return zip(tokenize(dim) for dim in dims.T)    
 
 def parse_url(data: object) -> URL:
     """

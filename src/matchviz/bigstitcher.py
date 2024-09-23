@@ -1,3 +1,4 @@
+from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 import os
@@ -16,6 +17,7 @@ from matchviz.core import (
     parse_url,
     tile_coordinate_to_rgba,
     tokenize_tile_coords,
+    tokenize_translations,
     translate_points,
 )
 from matchviz.types import Coords, TileCoordinate
@@ -32,8 +34,8 @@ from yarl import URL
 import neuroglancer
 
 
-def read_bigstitcher_xml(url: URL) -> SpimData2:
-    fs, path = fsspec.url_to_fs(str(url))
+def read_bigstitcher_xml(url: URL, anon: bool = True) -> SpimData2:
+    fs, path = fsspec.url_to_fs(str(url), anon=anon)
     bs_xml = fs.cat_file(path)
     bs_model = SpimData2.from_xml(bs_xml)
     return bs_model
@@ -47,7 +49,6 @@ class IdMap:
 
 
 def get_tilegroup_url(model: SpimData2) -> URL:
-    breakpoint()
     if hasattr(model.sequence_description.image_loader, "s3bucket"):
         bucket = model.sequence_description.image_loader.s3bucket
         image_root_path = model.sequence_description.image_loader.zarr.path
@@ -145,14 +146,14 @@ def parse_matches(
     return match_result
 
 
-def load_points_tile(url: str | URL) -> tuple[pl.DataFrame, pl.DataFrame | None]:
+def load_points_tile(url: str | URL, anon: bool = True) -> tuple[pl.DataFrame, pl.DataFrame | None]:
     """
     Load interest points and optionally correspondences from a bigstitcher-formatted n5 group as
     polars dataframes for a single tile.
     """
     log = structlog.get_logger()
     url_parsed = str(url)
-    store = zarr.N5FSStore(url_parsed, mode="r")
+    store = zarr.N5FSStore(url_parsed, mode="r", anon=anon)
     interest_points_group = zarr.open_group(
         store=store, path="interestpoints", mode="r"
     )
@@ -189,28 +190,27 @@ def load_points_tile(url: str | URL) -> tuple[pl.DataFrame, pl.DataFrame | None]
 
     return pl.DataFrame({"id": ids_list, "loc_xyz": loc}), match_result
 
+from pydantic_bigstitcher.transforms import Transform
 
-def get_tile_coords(bs_model: SpimData2) -> dict[int, Coords]:
+def get_tile_coords(bs_model: SpimData2, nominal_grid=True) -> dict[int, Coords]:
     """
     Get the coordinates of all the tiles referenced in bigstitcher xml data. Returns a dict with int
     keys (id numbers of tiles) and Coords values ()
     """
-    tile_coords: dict[int, Coords] = {}
-    tilegroup_url = get_tilegroup_url(bs_model)
+    # get all transformations for all view_setups
+    transforms_by_view_setups: dict[int, tuple[Transform, ...]] = {}
+    for vs, vr in zip(bs_model.sequence_description.view_setups.view_setups, bs_model.view_registrations.elements):
+        transforms = tuple(v.to_transform() for v in vr.view_transforms)
+        translation_array = np.array(tuple(tuple(t.transform.translation.values()) for t in transforms))
+        if nominal_grid:
+            for row in translation_array[::-1]:
+                if not np.all(row == 0):
+                    final_translation=row
+        else:
+            final_translation = translation_array.sum(0)        
 
-    view_setup_dict: dict[str, ViewSetup] = {
-        v.ident: v for v in bs_model.sequence_description.view_setups.view_setups
-    }
-    # TODO: don't hard-code zarr stuff in here, lets use the bigsticher metadata itself instead.
-    for file in bs_model.view_interest_points.data:
-        setup_id = file.setup
-        tile_name = view_setup_dict[setup_id].name
-        image_url = tilegroup_url.joinpath(f"{tile_name}.zarr")
-        _coords = ome_ngff_to_coords(image_url)
-        tile_coords[int(setup_id)] = _coords
-
-    return tile_coords
-
+        transforms_by_view_setups[int(vs.ident)] = {'z': final_translation[2], 'y': final_translation[1], 'x': final_translation[0]}
+    return transforms_by_view_setups
 
 class InterestPointsGroupMeta(BaseModel):
     list_version: str = Field(alias="list version")
@@ -427,59 +427,56 @@ def summarize_match(match: pl.DataFrame) -> pl.DataFrame:
 def summarize_matches(
     bs_model: SpimData2, matches_dict: dict[str, pl.DataFrame]
 ) -> pl.DataFrame:
-    # convert absolute bead paths to bigstitcher image names
     
     tile_coords = get_tile_coords(bs_model)
-    coords_tokenized = tokenize_tile_coords(tile_coords)
     
-    bs_image_names = tuple(
-        map(lambda v: v.parts[-2], matches_dict.keys())
-    )
-    viewsetup_ids = tuple(
-        map(lambda v: int(v.split("viewSetupId_")[-1]), bs_image_names)
-    )
+    coords_tokenized = tuple(tokenize_tile_coords(tile_coords))
 
-    # get base image metadata from bigstitcher xml
+    image_names = tuple(v.name for v in bs_model.sequence_description.view_setups.view_setups)
+
     bs_view_setups_by_id = {
         int(k.ident): k for k in bs_model.sequence_description.view_setups.view_setups
     }
 
     # polars dataframes keyed by bigstitcher image names
-    individual_summaries = {
-        viewsetup_ids[index]: summarize_match(v)
-        for index, v in enumerate(matches_dict.values())
-    }
+    individual_summaries = {}
+    for v in matches_dict.values():
+        individual_summaries[v['id_self'][0]] = summarize_match(v)
 
     # include the file name and the normalized tile coordinate to each column
     individual_augmented = {}
-
-    for idx, (k, v) in enumerate(individual_summaries.items()):
+    for k, v in individual_summaries.items():
+        tcoord = tile_coords[k]['x'], tile_coords[k]['y'], tile_coords[k]['z']
         individual_augmented[k] = v.with_columns(
-            image_name=pl.lit(bs_image_names[idx],
-            tile_coords = pl.lit(coords_tokenized[idx]))
-        )
-    return (
+            image_name=pl.lit(image_names[k]),
+            x_coord_self = pl.lit(tcoord[0]),
+            y_coord_self = pl.lit(tcoord[1]),
+            z_coord_self = pl.lit(tcoord[2]),
+            )
+    result = (
         pl.concat(individual_augmented.values())
         .select(
             [
+                pl.col('image_name'),
                 pl.col("id_self"),
-                pl.col("x_self"),
-                pl.col("y_self"),
-                pl.col("z_self"),
                 pl.col("id_other"),
-                pl.col("x_other"),
-                pl.col("y_other"),
-                pl.col("z_other"),
                 pl.col("num_matches"),
+                pl.col('x_coord_self'),
+                pl.col('y_coord_self'),
+                pl.col('z_coord_self')
             ]
         )
         .sort("id_self")
     )
+    return result
 
 
 def fetch_all_matches(
+        *,
+    bs_model: SpimData2,
     n5_interest_points_url: URL, 
-    pool: ThreadPoolExecutor
+    pool: ThreadPoolExecutor,
+    anon: bool = True,
 ) -> dict[str, pl.DataFrame | BaseException | None]:
     """
     Load all the match data from the n5 datasets containing it. 
@@ -488,12 +485,11 @@ def fetch_all_matches(
 
     This function uses a thread pool to speed things up.
     """
-    fs, path = fsspec.url_to_fs(str(str(n5_interest_points_url)))
-    all_beads = (n5_interest_points_url.with_path(v) for v in fs.glob(os.path.join(path, "*/*")))
-
+    vips = bs_model.view_interest_points
+    all_beads = tuple(n5_interest_points_url.joinpath(ip.path) for ip in vips.data)
     matches_dict: dict[str, pl.DataFrame | BaseException | None] = {}
     futures_dict = {}
-
+    
     for bead_path in all_beads:
         fut = pool.submit(load_points_tile, bead_path)
         futures_dict[fut] = bead_path

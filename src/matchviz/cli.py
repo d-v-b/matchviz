@@ -143,12 +143,17 @@ def tabulate_matches_cli(
     log = structlog.get_logger()
     bigstitcher_xml_url = URL(bigstitcher_xml)
     bs_model = read_bigstitcher_xml(bigstitcher_xml_url)
+    anon=True
     if interest_points is None:
         interest_points_url = bigstitcher_xml_url.parent.joinpath("interestpoints.n5")
     else:
         interest_points_url = URL(interest_points)
 
-    all_matches = fetch_all_matches(interest_points_url, pool)
+    all_matches = fetch_all_matches(
+        bs_model=bs_model,
+        n5_interest_points_url=interest_points_url,
+        pool=pool, 
+        anon=anon)
     if len(all_matches) == 0:
         raise ValueError('No matches found!')
     valid_matches = {}
