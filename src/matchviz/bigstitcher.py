@@ -414,7 +414,32 @@ def save_interest_points(*, bs_model: SpimData2, alignment_url: URL, dest: URL):
             tile_coords=tile_coords,
         )
 
+def fetch_summarize_matches(
+        *,
+        bigstitcher_xml: URL, 
+        pool: ThreadPoolExecutor, 
+        anon: bool=True) -> pl.DataFrame:
+    from structlog import get_logger
+    log = get_logger()
+    bs_model = read_bigstitcher_xml(bigstitcher_xml)
+    interest_points_url = bigstitcher_xml.parent.joinpath("interestpoints.n5")
+    all_matches = fetch_all_matches(
+        bs_model=bs_model,
+        n5_interest_points_url=interest_points_url,
+        pool=pool, 
+        anon=anon)
+    if len(all_matches) == 0:
+        raise ValueError('No matches found!')
+    valid_matches = {}
+    for key, value in all_matches.items():
+        if isinstance(value, BaseException):
+            log.info(f"An exception occurred when accessing {key}")
+            log.exception(value)
+        else:
+            valid_matches[key] = value
 
+    summarized = summarize_matches(bs_model=bs_model, matches_dict=valid_matches)
+    return summarized
 def summarize_match(match: pl.DataFrame) -> pl.DataFrame:
     """
     Summarize a dataframe of matches read from the bigstitcher n5 output by grouping by the id
