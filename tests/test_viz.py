@@ -2,20 +2,22 @@ import json
 import os
 from matchviz import (
     create_neuroglancer_state,
-    get_tile_coords,
-    load_points_tile,
-    ome_ngff_to_coords,
-    read_bigstitcher_xml,
-    parse_idmap,
     plot_points,
-    save_annotations,
-    save_interest_points,
-    image_name_to_tile_coord,
-    scale_points,
 )
 from matchviz.annotation import AnnotationWriterFSSpec
 import neuroglancer
+from matchviz.core import ome_ngff_to_coords, scale_points
 import pytest
+
+from matchviz.bigstitcher import (
+    get_tile_coords,
+    image_name_to_tile_coord,
+    load_points_tile,
+    parse_idmap,
+    read_bigstitcher_xml,
+    save_annotations,
+    save_interest_points,
+)
 
 
 @pytest.mark.skip
@@ -26,9 +28,13 @@ def test_from_bdv_xml():
 
 def test_create_neuroglancer_state():
     points_url = "s3://aind-open-data/exaSPIM_715345_2024-06-07_10-03-37_alignment_2024-07-01_19-45-38/tile_alignment_visualization/points/"
+    matches_url = "s3://aind-open-data/exaSPIM_715345_2024-06-07_10-03-37_alignment_2024-07-01_19-45-38/tile_alignment_visualization/matches/"
     image_url = "s3://aind-open-data/exaSPIM_715345_2024-06-07_10-03-37/SPIM.ome.zarr/"
     state = create_neuroglancer_state(
-        image_url=image_url, points_url=points_url, style="images_combined"
+        image_url=image_url,
+        points_url=points_url,
+        matches_url=matches_url,
+        style="images_combined",
     )
     print(json.dumps(state.to_json(), indent=2))
 
@@ -38,22 +44,21 @@ def test_viz(tmpdir):
     dataset = "exaSPIM_708373_2024-04-02_19-49-38"
     alignment_id = "alignment_2024-05-07_18-15-25"
     _ = save_annotations(
-        dataset=dataset, alignment_id=alignment_id, out_prefix=str(tmpdir)
+        dataset=dataset, alignment_id=alignment_id, dest_url=str(tmpdir)
     )
 
 
-def test_save_points_tile():
+def test_save_points_tile(tmpdir):
     bs_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/"
     bs_model = read_bigstitcher_xml(os.path.join(bs_url, "bigstitcher.xml"))
     tile_name = "tile_x_0000_y_0000_z_0000_ch_488"
     alignment_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/interestpoints.n5/tpId_0_viewSetupId_0/"
-    out_prefix = "points_out"
     tile_coords = get_tile_coords(bs_model)
     save_annotations(
         image_id=0,
         tile_name=tile_name,
-        alignment_url=alignment_url,
-        out_prefix=out_prefix,
+        interest_points=alignment_url,
+        dest_url=str(tmpdir),
         tile_coords=tile_coords,
     )
 
@@ -75,14 +80,14 @@ def test_parse_idmap():
 @pytest.mark.skip
 def test_load_points():
     url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/interestpoints.n5/tpId_0_viewSetupId_3/beads/"
-    points_df = load_points_tile(url)
+    _ = load_points_tile(url)
 
 
 def test_plot_points():
     url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/interestpoints.n5/tpId_0_viewSetupId_0/beads/"
     image_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38/SPIM.ome.zarr/tile_x_0000_y_0000_z_0000_ch_488.zarr"
     coords = ome_ngff_to_coords(image_url)
-    points_df, match_df = load_points_tile(url, coords=coords)
+    points_df, match_df = load_points_tile(url)
     scale_points(points_df, coords)
     plot_points(points_df, image_url)
 
