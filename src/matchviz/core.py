@@ -6,9 +6,8 @@ import zarr
 from yarl import URL
 import pathlib
 
-import os
 from typing import Literal, Sequence
-
+from zarr.storage import BaseStore
 from matchviz.types import Coords, TileCoordinate
 
 
@@ -17,6 +16,10 @@ def get_url(node: zarr.Group | zarr.Array) -> URL:
     Get a URL from a zarr array or group pointing to its location in storage
     """
     store = node.store
+    return get_store_url(store).joinpath(node.store)
+
+
+def get_store_url(store: BaseStore):
     if hasattr(store, "path"):
         if hasattr(store, "fs"):
             if isinstance(store.fs.protocol, Sequence):
@@ -31,7 +34,7 @@ def get_url(node: zarr.Group | zarr.Array) -> URL:
             store_path = store.path.split("://")[-1]
         else:
             store_path = store.path
-        return URL(f"{protocol}://{os.path.join(store_path, node.path)}")
+        return URL(f"{protocol}://{store_path}")
     else:
         msg = (
             f"The store associated with this object has type {type(store)}, which "
@@ -73,27 +76,13 @@ def translate_point(point: Sequence[float], params: Sequence[float]):
     return np.add(point, params)
 
 
-def translate_points(points_df: pl.DataFrame, coords: Coords):
+def translate_points_xyz(*, points_array: np.ndarray, coords: Coords) -> np.ndarray:
     """
-    Apply a translation
+    Apply a translation in world coordinates
     """
-    col = "loc_xyz"
     dims: tuple[Literal["x", "y", "z"], ...] = ("x", "y", "z")
-    col_index = points_df.columns.index(col)
-    local_scale = [coords[dim]["scale"] for dim in dims]
     local_trans = [coords[dim]["trans"] for dim in dims]
-
-    trans = np.divide(local_trans, local_scale)  # type: ignore
-    new_col = translate_point(points_df[col].to_list(), trans)
-
-    return points_df.clone().replace_column(
-        col_index, pl.Series(name=col, values=new_col.tolist())
-    )
-
-
-def transform_points(coords: Coords, points: np.ndarray):
-    translate_points(coords, points)
-    scale_points(coords, points)
+    return local_trans + points_array
 
 
 def get_percentiles(image_url: str) -> tuple[int, int]:
