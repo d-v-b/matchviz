@@ -1,29 +1,34 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Iterable, Sequence
+from typing import Iterable, Literal, Sequence
+import fsspec.implementations
+import fsspec.implementations.local
 import neuroglancer
 import numpy as np
 from neuroglancer.write_annotations import AnnotationWriter
 import fsspec
-import os
+import structlog
 from typing_extensions import Self
 import json
 import time
-import logging
 import io
+import s3fs
+from yarl import URL
+
+from matchviz.core import parse_url
 
 pool = ThreadPoolExecutor(max_workers=36)
 
 
-def cp(buf_in, fs_out, fname):
+def cp(buf_in, fs_out, fname) -> Literal["ok"]:
     with fs_out.open(fname, mode="wb") as fh:
         fh.write(buf_in.read())
     return "ok"
 
 
 def write_line_annotations(
-    path: str,
+    path: str | URL,
     lines: Iterable[tuple[tuple[float, ...], ...]],
     coordinate_space: neuroglancer.CoordinateSpace,
     *,
@@ -53,7 +58,7 @@ def write_line_annotations(
 
 
 def write_point_annotations(
-    path: str,
+    path: str | URL,
     *,
     points: np.ndarray | list[Sequence[float]],
     ids: np.ndarray | list[Sequence[float]],
@@ -81,7 +86,7 @@ def write_point_annotations(
 
     for _id, point in zip(ids, points):
         writer.add_point(point, id=_id, size=point_size, point_color=point_color)
-    writer.write(path)
+    writer.write(str(path))
 
 
 class AnnotationWriterFSSpec(AnnotationWriter):
@@ -89,8 +94,9 @@ class AnnotationWriterFSSpec(AnnotationWriter):
     An AnnotationWriter that uses FSSpec for writing, enabling cloud storage.
     """
 
-    def write(self: Self, path: str) -> None:
-        logger = logging.getLogger(__name__)
+    def write(self: Self, path: str | URL) -> None:
+        path_parsed = parse_url(path)
+        logger = structlog.get_logger(__name__)
 
         fut_map = {}
         metadata = {
@@ -119,19 +125,19 @@ class AnnotationWriterFSSpec(AnnotationWriter):
             ],
         }
 
-        if path.startswith("s3://"):
-            fs, _ = fsspec.url_to_fs(path)
+        if path_parsed.scheme == "s3":
+            fs = s3fs.S3FileSystem
         else:
-            fs, _ = fsspec.url_to_fs(path, auto_mkdir=True)
+            fs = fsspec.implementations.local.LocalFileSystem(auto_mkdir=True)
 
-        spatial_path = os.path.join(
-            path, "spatial0", "_".join("0" for _ in range(self.rank))
+        spatial_path = path_parsed.joinpath(
+            "spatial0", "_".join("0" for _ in range(self.rank))
         )
 
         start = time.time()
         logger.info("Writing info...")
 
-        with fs.open(os.path.join(path, "info"), mode="w") as f:
+        with fs.open(path_parsed.joinpath("info").path, mode="w") as f:
             f.write(json.dumps(metadata))
 
         logger.info(f"Preparing to write annotations to {spatial_path}...")
@@ -139,33 +145,32 @@ class AnnotationWriterFSSpec(AnnotationWriter):
         self._serialize_annotations(spatial_buf, self.annotations)
         spatial_buf.seek(0)
 
-        with fs.open(spatial_path, mode="wb") as f_rem:
+        with fs.open(spatial_path.path, mode="wb") as f_rem:
             f_rem.write(spatial_buf.read())
 
-        logger.info(f'Preparing to write annotations to {os.path.join(path, "by_id")}')
+        by_id_url = path_parsed.joinpath("by_id")
+        logger.info(f"Preparing to write annotations to {str(by_id_url)}")
 
         for annotation in self.annotations:
-            by_id_path = os.path.join(path, "by_id", str(annotation.id))
+            by_id_path = by_id_url.joinpath(str(annotation.id))
 
             id_buf = io.BytesIO()
             self._serialize_annotation(id_buf, annotation)
             id_buf.seek(0)
-            fut = pool.submit(cp, id_buf, fs, by_id_path)
-            fut_map[fut] = by_id_path
+            fut = pool.submit(cp, id_buf, fs, by_id_path.path)
+            fut_map[fut] = by_id_path.path
 
-        logger.info(
-            f'Preparing to write relationships to {os.path.join(path, "rel_*")}'
-        )
+        logger.info("Preparing to write relationships")
         for i, relationship in enumerate(self.relationships):
             rel_index = self.related_annotations[i]
 
             for segment_id, anns in rel_index.items():
-                rel_path = os.path.join(path, f"rel_{relationship}", str(segment_id))
+                rel_path = path_parsed.joinpath(f"rel_{relationship}", str(segment_id))
                 rel_buf = io.BytesIO()
                 self._serialize_annotations(rel_buf, anns)
                 rel_buf.seek(0)
-                fut = pool.submit(cp, rel_buf, fs, rel_path)
-                fut_map[fut] = rel_path
+                fut = pool.submit(cp, rel_buf, fs, rel_path.path)
+                fut_map[fut] = rel_path.path
 
         for result in as_completed(fut_map.keys()):
             _ = result.result()
