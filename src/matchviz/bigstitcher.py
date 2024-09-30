@@ -487,9 +487,9 @@ def summarize_matches(
         tcoord = tile_coords[k]["x"], tile_coords[k]["y"], tile_coords[k]["z"]
         individual_augmented[k] = v.with_columns(
             image_name=pl.lit(image_names[k]),
-            x_coord_self=pl.lit(tcoord[0]),
-            y_coord_self=pl.lit(tcoord[1]),
-            z_coord_self=pl.lit(tcoord[2]),
+            x_coord_self=pl.lit(tcoord[0]['trans']),
+            y_coord_self=pl.lit(tcoord[1]['trans']),
+            z_coord_self=pl.lit(tcoord[2]['trans']),
         )
     result = (
         pl.concat(individual_augmented.values())
