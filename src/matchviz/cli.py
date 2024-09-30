@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 import json
-from typing import Any, Literal, Sequence
+from typing import Iterable, Literal, Sequence
 import click
 import fsspec
 import fsspec.implementations
@@ -52,7 +52,7 @@ log_level = click.option("--log-level", type=click.STRING, default="info")
 @click.option("--invert-x-axis", type=click.BOOL, is_flag=True, default=False)
 def plot_matches_cli(
     bigstitcher_xml: str,
-    dest: Any,
+    dest: str,
     invert_y_axis: bool,
     invert_x_axis: bool,
 ):
@@ -76,20 +76,30 @@ def plot_matches_cli(
 @cli.command("save-points")
 @click.option("--src", type=click.STRING, required=True)
 @click.option("--dest", type=click.STRING, required=True)
-def save_interest_points_cli(src: str, dest: str):
+@click.option("--image-names", type=click.STRING)
+def save_interest_points_cli(src: str, dest: str, image_names: str | None):
     """
     Save bigstitcher interest points from n5 to neuroglancer precomputed annotations.
     """
     # strip trailing '/' from src and dest
     src_parsed = URL(src.rstrip("/"))
     dest_parsed = URL(dest.rstrip("/"))
-    save_points(bigstitcher_url=src_parsed, dest=dest_parsed)
+    if image_names is not None:
+        image_names_parsed = image_names.replace(" ", "").split(",")
+    else:
+        image_names_parsed = image_names
+    save_points(
+        bigstitcher_url=src_parsed, dest=dest_parsed, image_names=image_names_parsed
+    )
 
 
-def save_points(bigstitcher_url: URL, dest: URL):
+def save_points(bigstitcher_url: URL, dest: URL, image_names: Iterable[str] | None = None):
     bs_model = read_bigstitcher_xml(bigstitcher_url)
     save_interest_points(
-        bs_model=bs_model, alignment_url=bigstitcher_url.parent, dest=dest
+        bs_model=bs_model,
+        alignment_url=bigstitcher_url.parent,
+        dest=dest,
+        image_names=image_names,
     )
 
 
