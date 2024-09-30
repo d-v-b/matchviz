@@ -262,19 +262,14 @@ def save_annotations(
 
     N5 is organized according to the structure defined here: https://github.com/PreibischLab/multiview-reconstruction/blob/a566bf4d6d35a7ab00d976a8bf46f1615b34b2d0/src/main/java/net/preibisch/mvrecon/fiji/spimdata/interestpoints/InterestPointsN5.java#L54
 
-    If matches are not point, then just the interest points will be saved.
+    If matches are not found, then just the interest points will be saved.
     """
-    view_setup_models = tuple(
-        filter(
-            lambda v: v.ident == str(image_id),
-            bs_model.sequence_description.view_setups.view_setups,
-        )
-    )
-    if len(view_setup_models) == 0:
-        raise ValueError(
-            f"Could not find view setup for image id {image_id} in bigstitcher metadata."
-        )
-    image_name = view_setup_models[0].name
+
+    ips_by_setup = {int(v.setup): v for v in bs_model.view_interest_points.data}
+    view_setups_by_id = {int(v.ident): v for v in bs_model.sequence_description.view_setups.view_setups}
+    
+    image_name = view_setups_by_id[image_id].name
+
     log = structlog.get_logger(image_name=image_name)
     start = time.time()
     log.info(f"Begin saving annotations for image id {image_id}")
@@ -318,7 +313,7 @@ def save_annotations(
 
     for img_id in to_access:
         coords = tile_coords[img_id]
-        _path = bs_model.view_interest_points.data[img_id].path
+        _path = ips_by_setup[img_id].path
         points_data, match_data = load_points_tile(
             store=ip_store, path=_path, anon=True
         )
@@ -338,7 +333,10 @@ def save_annotations(
         names=["x", "y", "z"], scales=annotation_scales, units=annotation_units
     )
 
-    point_color = tile_coordinate_to_rgba(image_name_to_tile_coord(image_name))
+    try:
+        point_color = tile_coordinate_to_rgba(image_name_to_tile_coord(image_name))
+    except IndexError:
+        point_color = (125,125,125,125)
 
     line_starts: list[tuple[float, float, float, float]] = []
     line_stops: list[tuple[float, float, float, float]] = []
@@ -401,13 +399,15 @@ def save_interest_points(
     the directory name <out_prefix>/<image_name>.precomputed
     """
 
-    view_setup_dict: dict[int, ViewSetup] = {
+    view_setup_by_ident: dict[int, ViewSetup] = {
         int(v.ident): v for v in bs_model.sequence_description.view_setups.view_setups
     }
 
+    ips_by_setup = {int(v.setup): v for v in bs_model.view_interest_points.data}
+    
     if image_names is None:
         image_names_parsed = [
-            v.name for v in bs_model.sequence_description.view_setups.view_setups
+            view_setup_by_ident[ip_id].name for ip_id in ips_by_setup
         ]
     else:
         image_names_parsed = image_names
@@ -419,21 +419,7 @@ def save_interest_points(
             "No view interest points were found in the bigstitcher xml file."
         )
 
-    for image_name in image_names_parsed:
-        view_setup_models = tuple(
-            filter(
-                lambda v: v.name == image_name,
-                bs_model.sequence_description.view_setups.view_setups,
-            )
-        )
-        if len(view_setup_models) == 0:
-            raise ValueError(f"No view setup found with name {image_name}")
-        elif len(view_setup_models) > 1:
-            raise ValueError(f"More than one view setup found with name {image_name}")
-
-        view_setup_model = view_setup_models[0]
-        setup_id = int(view_setup_model.ident)
-
+    for setup_id in ips_by_setup:
         save_annotations(
             bs_model=bs_model,
             image_id=setup_id,
