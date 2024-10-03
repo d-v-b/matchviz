@@ -6,7 +6,6 @@ import re
 import time
 from typing import Annotated, Iterable, cast, TYPE_CHECKING
 from typing_extensions import TypedDict, deprecated
-
 from pydantic import BaseModel, BeforeValidator, Field
 from pydantic_zarr.v2 import ArraySpec, GroupSpec
 
@@ -21,6 +20,7 @@ from matchviz.types import Coords, TileCoordinate
 
 if TYPE_CHECKING:
     pass
+
 import zarr
 import structlog
 import fsspec
@@ -30,13 +30,28 @@ from pydantic_bigstitcher import SpimData2, ViewSetup
 from yarl import URL
 import neuroglancer
 
-
 def read_bigstitcher_xml(url: URL, anon: bool = True) -> SpimData2:
     fs, path = fsspec.url_to_fs(str(url), anon=anon)
     bs_xml = fs.cat_file(path)
     bs_model = SpimData2.from_xml(bs_xml)
     return bs_model
 
+def bdv_to_neuroglancer(bs_model: SpimData2) -> neuroglancer.ViewerState:
+    space = neuroglancer.CoordinateSpace(
+        names=["z", "y", "x"],
+        scales=[
+            100,
+        ]
+        * 3,
+        units=[
+            "nm",
+        ]
+        * 3,
+    )
+
+    state = neuroglancer.ViewerState(
+        dimensions=space, cross_section_scale=1000, projection_scale=500_000
+    )
 
 # TODO: use this instead of the raw tuple
 @dataclass(frozen=True)
@@ -431,9 +446,8 @@ def save_interest_points(
 def fetch_summarize_matches(
     *, bigstitcher_xml: URL, pool: ThreadPoolExecutor, anon: bool = True
 ) -> pl.DataFrame:
-    from structlog import get_logger
 
-    log = get_logger()
+    log = structlog.get_logger()
     bs_model = read_bigstitcher_xml(bigstitcher_xml)
     interest_points_url = bigstitcher_xml.parent.joinpath("interestpoints.n5")
     all_matches = fetch_all_matches(
