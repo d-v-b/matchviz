@@ -1,10 +1,12 @@
 from __future__ import annotations
+from itertools import product
+import pydantic_bigstitcher.transform
 from zarr import N5FSStore
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 import re
 import time
-from typing import Annotated, Iterable, cast, TYPE_CHECKING
+from typing import Annotated, Any, Iterable, cast, TYPE_CHECKING
 from typing_extensions import TypedDict, deprecated
 from pydantic import BaseModel, BeforeValidator, Field
 from pydantic_zarr.v2 import ArraySpec, GroupSpec
@@ -27,6 +29,7 @@ import fsspec
 import numpy as np
 import polars as pl
 from pydantic_bigstitcher import SpimData2, ViewSetup
+import pydantic_bigstitcher
 from yarl import URL
 import neuroglancer
 
@@ -37,21 +40,47 @@ def read_bigstitcher_xml(url: URL, anon: bool = True) -> SpimData2:
     return bs_model
 
 def bdv_to_neuroglancer(bs_model: SpimData2) -> neuroglancer.ViewerState:
+    unit = bs_model.sequence_description.view_setups.elements[0].voxel_size.unit
+    dimension_names = ["z", "y", "x"]
+    units = [unit] * len(dimension_names)
+
     space = neuroglancer.CoordinateSpace(
-        names=["z", "y", "x"],
+        names=dimension_names,
         scales=[
             100,
         ]
         * 3,
-        units=[
-            "nm",
-        ]
-        * 3,
+        units=units,
     )
 
     state = neuroglancer.ViewerState(
         dimensions=space, cross_section_scale=1000, projection_scale=500_000
     )
+
+    for view_reg in bs_model.view_registrations.elements:
+        tforms = [t.to_transform() for t in view_reg.view_transforms]
+        matrix = []
+        image_name = ''
+        image_offset = []
+        image_source = ''
+        shader = ''
+        shader_controls = ''
+        image_transform = neuroglancer.CoordinateSpaceTransform(
+            output_dimensions=space,
+            input_dimensions=space,
+            source_rank=len(dimension_names),
+            matrix=matrix)
+
+        state.layers.append(
+            name=image_name,
+            layer=neuroglancer.ImageLayer(
+                transform=image_transform,
+                localPosition=image_offset,
+                source=image_source,
+                shader_controls=shader_controls,
+                shader=shader
+            ))
+    return state
 
 # TODO: use this instead of the raw tuple
 @dataclass(frozen=True)
@@ -559,3 +588,44 @@ def fetch_all_matches(
             matches_dict[key] = result.exception()
 
     return matches_dict
+
+def affine_to_array(
+        tx: pydantic_bigstitcher.transform.MatrixMap[Any],
+        dimensions: tuple[str, ...]) -> np.ndarray:
+    assert set(dimensions) == set(tx.keys())
+    out = np.zeros((
+        len(tx), ) * 2)
+    
+    for idx, (dim_outer, dim_inner) in enumerate(product(dimensions, dimensions)):
+        out.ravel()[idx] = tx[dim_outer][dim_inner]
+    
+    return out
+
+def array_to_affine(array: np.ndarray, dimensions: tuple[str, ...]) -> pydantic_bigstitcher.transform.MatrixMap[Any]:
+    return dict(zip(dimensions, (array_to_translate(row, dimensions) for row in array)))
+
+def translate_to_array(
+        tx: pydantic_bigstitcher.transform.VectorMap[Any],
+        dimensions: tuple[str, ...]) -> np.ndarray:
+    assert set(dimensions) == set(tx.keys())
+    out = np.zeros(len(tx))
+    for idx, dim in enumerate(dimensions):
+        out[idx] = tx[dim]
+    return out
+        
+def array_to_translate(array: np.ndarray, dimensions: tuple[str, ...]) -> pydantic_bigstitcher.transform.VectorMap[Any]:
+    return dict(zip(dimensions, array))        
+
+def compose_transforms(
+        tx_a: pydantic_bigstitcher.transform.HoAffine[Any], 
+        tx_b: pydantic_bigstitcher.transform.HoAffine[Any],
+        dimensions: tuple[str, ...]
+        ) -> pydantic_bigstitcher.transform.HoAffine[Any]:
+
+        new_affine = affine_to_array(tx=tx_a.affine, dimensions=dimensions) @ affine_to_array(tx=tx_b.affine, dimensions=dimensions)
+        new_trans = translate_to_array(tx=tx_a.translation, dimensions=dimensions) + translate_to_array(tx=tx_b.translation, dimensions=dimensions)
+        return pydantic_bigstitcher.transform.HoAffine(
+            affine=array_to_affine(
+                new_affine, dimensions=dimensions), 
+                translation=array_to_translate(new_trans, dimensions=dimensions))
+            
