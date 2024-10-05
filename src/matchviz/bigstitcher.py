@@ -1,5 +1,5 @@
 from __future__ import annotations
-from itertools import product
+from itertools import accumulate, product
 import pydantic_bigstitcher.transform
 from zarr import N5FSStore
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -10,7 +10,7 @@ from typing import Annotated, Any, Iterable, cast, TYPE_CHECKING
 from typing_extensions import TypedDict, deprecated
 from pydantic import BaseModel, BeforeValidator, Field
 from pydantic_zarr.v2 import ArraySpec, GroupSpec
-
+from functools import partial
 from matchviz.annotation import write_line_annotations, write_point_annotations
 from matchviz.core import (
     get_url,
@@ -39,47 +39,140 @@ def read_bigstitcher_xml(url: URL, anon: bool = True) -> SpimData2:
     bs_model = SpimData2.from_xml(bs_xml)
     return bs_model
 
-def bdv_to_neuroglancer(bs_model: SpimData2) -> neuroglancer.ViewerState:
+def view_bdv(bs_model: SpimData2, host: URL | None = None):
+    state = bdv_to_neuroglancer(bs_model, host)
+    viewer = neuroglancer.Viewer()
+    viewer.set_state(state)
+    print(viewer)
+
+def bdv_to_neuroglancer(
+        xml_path: URL, 
+        *,
+        anon: bool=True,
+        host: URL | None = None) -> neuroglancer.ViewerState:
+    bs_model = read_bigstitcher_xml(xml_path, anon=anon)
     unit = bs_model.sequence_description.view_setups.elements[0].voxel_size.unit
     dimension_names = ["z", "y", "x"]
     units = [unit] * len(dimension_names)
 
-    space = neuroglancer.CoordinateSpace(
+    output_space = neuroglancer.CoordinateSpace(
         names=dimension_names,
         scales=[
-            100,
+            100, 100, 100
         ]
-        * 3,
+        ,
         units=units,
     )
 
     state = neuroglancer.ViewerState(
-        dimensions=space, cross_section_scale=1000, projection_scale=500_000
+        dimensions=output_space, cross_section_scale=1000, projection_scale=500_000
     )
 
+    if bs_model.base_path.path == '.':
+        base_path = xml_path.parent
+    else:
+        raise ValueError(f'Base path {bs_model.base_path.path} is not supported')
+    
+    image_loader = bs_model.sequence_description.image_loader
+    
+    if image_loader.fmt == "bdv.multimg.zarr":
+        image_format = "zarr"
+        if image_loader.zarr.type == 'absolute':
+            if hasattr(image_loader, "s3bucket"):
+                prefix = f's3://{image_loader.s3bucket}'
+            else:
+                prefix="file:///"
+            container_root = URL(prefix) / image_loader.zarr.path
+        else:
+            container_root = base_path / image_loader.zarr.path
+
+    elif image_loader.fmt == "bdv.n5":
+        image_format = "n5"
+        if image_loader.n5.type == 'absolute':
+            if hasattr(image_loader, "s3bucket"):
+                prefix = f's3://{image_loader.s3bucket}'
+            else:
+                prefix="file:///"
+            container_root = URL(prefix) / image_loader.zarr.path
+        else:
+            container_root = base_path / image_loader.n5.path
+    else:
+        raise ValueError(f"Unknown image format: {bs_model.sequence_description.image_loader.fmt}")
+
     for view_reg in bs_model.view_registrations.elements:
-        tforms = [t.to_transform() for t in view_reg.view_transforms]
-        matrix = []
+        vs_id = view_reg.setup
+        maybe_view_setups = tuple(
+            filter(
+                lambda v: v.ident == vs_id, 
+                bs_model.sequence_description.view_setups.elements
+                )
+            )
+        
+        if len(maybe_view_setups) > 1:
+            raise ValueError(f"Ambiguous setup id {vs_id}.")
+        
+        view_setup = maybe_view_setups[0]
+        image_name = view_setup.name
+        
+        if image_format == 'zarr':
+            image_path = container_root / f'{image_name}.zarr'
+        else:
+            image_path = container_root / image_name
+
+        # bigstitcher stores the transformations in reverse order, i.e. the 
+        # last transform in the series is the first one in the list
+
+        tforms = (t.to_transform() for t in reversed(view_reg.view_transforms))
+        # for zarr data, remove the translation to nominal grid transform
+        tforms_filtered = tuple(filter(lambda v: v.name != "Translation to Nominal Grid", tforms))
+        hoaffines = [t.transform for t in tforms_filtered]
+        
+        composed_hoaffs = tuple(
+            accumulate(hoaffines, partial(compose_hoaffines, dimensions=dimension_names))
+            )
+        
+        # neuroglancer expects ndim x ndim + 1 matrix
+        matrix = hoaffine_to_array(
+            composed_hoaffs[-1], 
+            dimensions=dimension_names
+            )[:-1]
+
+        # convert translations into the output coordinate space
+        base_scale_dict = {dim: float(x) for x, dim in zip(view_setup.voxel_size.size.split(' '), ('x','y','z')) }
+        scales=[base_scale_dict[dim] for dim in dimension_names]
+        _in_space = neuroglancer.CoordinateSpace(
+        names=dimension_names,
+        scales=scales,
+        units=units)
+
+        matrix[:,:-1] *= np.array(output_space.scales / _in_space.scales)
         image_name = ''
-        image_offset = []
-        image_source = ''
+        image_offset = (0, 0, 0) 
+        
+        image_source = f'{image_format}://{image_path}'
+        
         shader = ''
         shader_controls = ''
+        input_space = neuroglancer.CoordinateSpace(
+            names=dimension_names,
+            units=units,
+            scales=scales
+        )
+        
         image_transform = neuroglancer.CoordinateSpaceTransform(
-            output_dimensions=space,
-            input_dimensions=space,
+            output_dimensions=output_space,
+            input_dimensions=input_space,
             source_rank=len(dimension_names),
             matrix=matrix)
 
         state.layers.append(
             name=image_name,
             layer=neuroglancer.ImageLayer(
-                transform=image_transform,
-                localPosition=image_offset,
-                source=image_source,
-                shader_controls=shader_controls,
-                shader=shader
+                source=neuroglancer.LayerDataSource(
+                    url=image_source, 
+                    transform=image_transform),
             ))
+
     return state
 
 # TODO: use this instead of the raw tuple
@@ -589,6 +682,16 @@ def fetch_all_matches(
 
     return matches_dict
 
+def hoaffine_to_array(
+        tx: pydantic_bigstitcher.transform.HoAffine[Any],
+        dimensions: tuple[str, ...]) -> np.ndarray:
+    out = np.eye((len(dimensions) + 1))
+    affine = affine_to_array(tx.affine, dimensions)
+    translation = translate_to_array(tx.translation, dimensions)
+    out[:-1, :-1] = affine
+    out[:-1,-1] = translation
+    return out
+
 def affine_to_array(
         tx: pydantic_bigstitcher.transform.MatrixMap[Any],
         dimensions: tuple[str, ...]) -> np.ndarray:
@@ -616,9 +719,10 @@ def translate_to_array(
 def array_to_translate(array: np.ndarray, dimensions: tuple[str, ...]) -> pydantic_bigstitcher.transform.VectorMap[Any]:
     return dict(zip(dimensions, array))        
 
-def compose_transforms(
+def compose_hoaffines(
         tx_a: pydantic_bigstitcher.transform.HoAffine[Any], 
         tx_b: pydantic_bigstitcher.transform.HoAffine[Any],
+        *,
         dimensions: tuple[str, ...]
         ) -> pydantic_bigstitcher.transform.HoAffine[Any]:
 
