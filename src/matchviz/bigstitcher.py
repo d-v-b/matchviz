@@ -6,12 +6,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 import re
 import time
-from typing import Annotated, Any, Iterable, cast, TYPE_CHECKING
+from typing import Annotated, Any, Iterable, Literal, cast, TYPE_CHECKING
 from typing_extensions import TypedDict, deprecated
 from pydantic import BaseModel, BeforeValidator, Field
 from pydantic_zarr.v2 import ArraySpec, GroupSpec
 from functools import partial
 from matchviz.annotation import write_line_annotations, write_point_annotations
+import random
+import colorsys
 from matchviz.core import (
     get_url,
     parse_url,
@@ -32,7 +34,7 @@ from pydantic_bigstitcher import SpimData2, ViewSetup
 import pydantic_bigstitcher
 from yarl import URL
 import neuroglancer
-
+np.random.seed(0)
 def read_bigstitcher_xml(url: URL, anon: bool = True) -> SpimData2:
     fs, path = fsspec.url_to_fs(str(url), anon=anon)
     bs_xml = fs.cat_file(path)
@@ -49,7 +51,9 @@ def bdv_to_neuroglancer(
         xml_path: URL, 
         *,
         anon: bool=True,
-        host: URL | None = None) -> neuroglancer.ViewerState:
+        host: URL | None = None,
+        channels: Literal["all"] | list[int] = 'all',
+        display_settings: dict[str, Any]) -> neuroglancer.ViewerState:
     bs_model = read_bigstitcher_xml(xml_path, anon=anon)
     unit = bs_model.sequence_description.view_setups.elements[0].voxel_size.unit
     dimension_names = ["z", "y", "x"]
@@ -69,7 +73,11 @@ def bdv_to_neuroglancer(
     )
 
     if bs_model.base_path.path == '.':
-        base_path = xml_path.parent
+        if host is None:
+            base_path = xml_path.parent
+        else:
+            base_path = host
+
     else:
         raise ValueError(f'Base path {bs_model.base_path.path} is not supported')
     
@@ -79,10 +87,13 @@ def bdv_to_neuroglancer(
         image_format = "zarr"
         if image_loader.zarr.type == 'absolute':
             if hasattr(image_loader, "s3bucket"):
-                prefix = f's3://{image_loader.s3bucket}'
+                prefix = URL(f's3://{image_loader.s3bucket}')
             else:
-                prefix="file:///"
-            container_root = URL(prefix) / image_loader.zarr.path
+                if host is not None:
+                    prefix=host
+                else:
+                    prefix=URL('file:///')
+            container_root = prefix / image_loader.zarr.path
         else:
             container_root = base_path / image_loader.zarr.path
 
@@ -92,7 +103,10 @@ def bdv_to_neuroglancer(
             if hasattr(image_loader, "s3bucket"):
                 prefix = f's3://{image_loader.s3bucket}'
             else:
-                prefix="file:///"
+                if host is not None:
+                    prefix=host
+                else:
+                    prefix=URL('file:///')
             container_root = URL(prefix) / image_loader.zarr.path
         else:
             container_root = base_path / image_loader.n5.path
@@ -112,11 +126,15 @@ def bdv_to_neuroglancer(
             raise ValueError(f"Ambiguous setup id {vs_id}.")
         
         view_setup = maybe_view_setups[0]
-        image_name = view_setup.name
-        
+
+        if channels != 'all' and int(view_setup.attributes.channel) not in channels:
+            continue
+
         if image_format == 'zarr':
+            image_name = view_setup.name
             image_path = container_root / f'{image_name}.zarr'
         else:
+            image_name = f'setup{view_reg.setup}/timepoint{view_reg.timepoint}'
             image_path = container_root / image_name
 
         # bigstitcher stores the transformations in reverse order, i.e. the 
@@ -150,9 +168,20 @@ def bdv_to_neuroglancer(
         image_offset = (0, 0, 0) 
         
         image_source = f'{image_format}://{image_path}'
-        
-        shader = ''
-        shader_controls = ''
+        h,s,l = random.random(), 0.5 + random.random()/2.0, 0.4 + random.random()/5.0
+        color = [int(256*i) for i in colorsys.hls_to_rgb(h,l,s)]
+        color_str = "#{0:02x}{1:02x}{2:02x}".format(*color)
+        shader = (
+            "#uicontrol invlerp normalized()\n"
+            f'#uicontrol vec3 color color(default="{color_str}")\n'
+            "void main(){{emitRGB(color * normalized());}}"
+        )
+        image_shader_controls = {
+        "normalized": {
+            "range": [display_settings['start'], display_settings['stop']],
+            "window": [display_settings['min'], display_settings['max']],
+        }
+    }
         input_space = neuroglancer.CoordinateSpace(
             names=dimension_names,
             units=units,
@@ -164,13 +193,16 @@ def bdv_to_neuroglancer(
             input_dimensions=input_space,
             source_rank=len(dimension_names),
             matrix=matrix)
-
+        # TODO: choose a source class based on whether a host was provided, so that 
+        # local files can potentially be viewed.
         state.layers.append(
             name=image_name,
             layer=neuroglancer.ImageLayer(
                 source=neuroglancer.LayerDataSource(
                     url=image_source, 
                     transform=image_transform),
+                shader_controls=image_shader_controls,
+                shader=shader
             ))
 
     return state
