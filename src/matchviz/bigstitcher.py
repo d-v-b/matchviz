@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 import re
 import time
-from typing import Annotated, Any, Iterable, Literal, cast, TYPE_CHECKING
+from typing import Annotated, Any, Iterable, Literal, cast, TYPE_CHECKING, Iterable
 from typing_extensions import TypedDict, deprecated
 from pydantic import BaseModel, BeforeValidator, Field
 from pydantic_zarr.v2 import ArraySpec, GroupSpec
@@ -52,24 +52,26 @@ def bdv_to_neuroglancer(
         *,
         anon: bool=True,
         host: URL | None = None,
-        channels: Literal["all"] | list[int] = 'all',
+        view_setups: Literal["all"] | Iterable[int] = 'all',
+        channels: Literal["all"] | Iterable[int] = 'all',
         display_settings: dict[str, Any]) -> neuroglancer.ViewerState:
+    
     bs_model = read_bigstitcher_xml(xml_path, anon=anon)
     unit = bs_model.sequence_description.view_setups.elements[0].voxel_size.unit
+    scales = tuple(map(float, bs_model.sequence_description.view_setups.elements[0].voxel_size.size.split(" ")))
     dimension_names = ["z", "y", "x"]
     units = [unit] * len(dimension_names)
 
     output_space = neuroglancer.CoordinateSpace(
         names=dimension_names,
         scales=[
-            100, 100, 100
-        ]
-        ,
+            scales[0],
+        ] * len(dimension_names),
         units=units,
     )
 
     state = neuroglancer.ViewerState(
-        dimensions=output_space, cross_section_scale=1000, projection_scale=500_000
+        dimensions=output_space
     )
 
     if bs_model.base_path.path == '.':
@@ -115,6 +117,10 @@ def bdv_to_neuroglancer(
 
     for view_reg in bs_model.view_registrations.elements:
         vs_id = view_reg.setup
+
+        if view_setups != 'all' and int(vs_id) not in view_setups:
+            continue
+
         maybe_view_setups = tuple(
             filter(
                 lambda v: v.ident == vs_id, 
@@ -140,33 +146,25 @@ def bdv_to_neuroglancer(
         # bigstitcher stores the transformations in reverse order, i.e. the 
         # last transform in the series is the first one in the list
 
-        tforms = (t.to_transform() for t in reversed(view_reg.view_transforms))
+        tforms = tuple(t.to_transform() for t in reversed(view_reg.view_transforms))
         # for zarr data, remove the translation to nominal grid transform
         tforms_filtered = tuple(filter(lambda v: v.name != "Translation to Nominal Grid", tforms))
         hoaffines = [t.transform for t in tforms_filtered]
         
-        composed_hoaffs = tuple(
-            accumulate(hoaffines, partial(compose_hoaffines, dimensions=dimension_names))
-            )
-        
+        composed_hoaffs = tuple(accumulate(hoaffines, partial(compose_hoaffines, dimensions=dimension_names)))
+
         # neuroglancer expects ndim x ndim + 1 matrix
         matrix = hoaffine_to_array(
             composed_hoaffs[-1], 
             dimensions=dimension_names
             )[:-1]
-
+        
         # convert translations into the output coordinate space
         base_scale_dict = {dim: float(x) for x, dim in zip(view_setup.voxel_size.size.split(' '), ('x','y','z')) }
-        scales=[base_scale_dict[dim] for dim in dimension_names]
-        _in_space = neuroglancer.CoordinateSpace(
-        names=dimension_names,
-        scales=scales,
-        units=units)
-
-        matrix[:,:-1] *= np.array(output_space.scales / _in_space.scales)
+        scales = [base_scale_dict[dim] for dim in dimension_names]
+        scales = [min(scales)] * len(scales)
         image_name = ''
-        image_offset = (0, 0, 0) 
-        
+
         image_source = f'{image_format}://{image_path}'
         h,s,l = random.random(), 0.5 + random.random()/2.0, 0.4 + random.random()/5.0
         color = [int(256*i) for i in colorsys.hls_to_rgb(h,l,s)]
@@ -189,7 +187,7 @@ def bdv_to_neuroglancer(
         )
         
         image_transform = neuroglancer.CoordinateSpaceTransform(
-            output_dimensions=output_space,
+            output_dimensions=input_space,
             input_dimensions=input_space,
             source_rank=len(dimension_names),
             matrix=matrix)
@@ -202,7 +200,8 @@ def bdv_to_neuroglancer(
                     url=image_source, 
                     transform=image_transform),
                 shader_controls=image_shader_controls,
-                shader=shader
+                shader=shader,
+                blend='additive'
             ))
 
     return state
@@ -758,8 +757,11 @@ def compose_hoaffines(
         dimensions: tuple[str, ...]
         ) -> pydantic_bigstitcher.transform.HoAffine[Any]:
 
-        new_affine = affine_to_array(tx=tx_a.affine, dimensions=dimensions) @ affine_to_array(tx=tx_b.affine, dimensions=dimensions)
-        new_trans = translate_to_array(tx=tx_a.translation, dimensions=dimensions) + translate_to_array(tx=tx_b.translation, dimensions=dimensions)
+        homogeneous_matrix = hoaffine_to_array(tx_b, dimensions=dimensions) @ hoaffine_to_array(tx_a, dimensions=dimensions)
+
+        new_affine = homogeneous_matrix[:-1, :-1]
+        new_trans = homogeneous_matrix[:-1,-1]
+
         return pydantic_bigstitcher.transform.HoAffine(
             affine=array_to_affine(
                 new_affine, dimensions=dimensions), 

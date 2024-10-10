@@ -40,14 +40,16 @@ def test_hoaffine_to_array() -> None:
     assert np.array_equal(observed, expected)
 
 
-def test_bdv_to_neuroglancer() -> None:
+def test_bdv_to_neuroglancer() -> None:    
     bs_xml = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/bigstitcher.xml"
+    host = None
     bs_model = read_bigstitcher_xml(bs_xml)
     viewer_state = bdv_to_neuroglancer(
         URL(bs_xml), 
-        host=None,
+        host=host,
         display_settings = {'start': 100, 'stop': 200, 'min': 0, 'max': 400},
-        channels=[0])
+        channels=[0],
+        view_setups='all')
     viewer = neuroglancer.Viewer()
     viewer.set_state(viewer_state)
     print(viewer)
