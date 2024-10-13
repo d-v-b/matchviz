@@ -6,20 +6,15 @@ from matchviz.cli import tabulate_matches_cli
 
 
 @pytest.mark.skip
-@pytest.mark.parametrize(
-    "alignment_url",
-    [
-        "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/bigstitcher.xml"
-    ],
-)
-def test_save_points(tmpdir, alignment_url):
+@pytest.mark.parametrize('bigstitcher_xml', [0], indirect=True)
+def test_save_points(tmpdir, bigstitcher_xml):
     out_path = os.path.join(str(tmpdir), "tile_alignment_visualization")
     run_result = subprocess.run(
         [
             "matchviz",
             "save-points",
             "--src",
-            alignment_url,
+            bigstitcher_xml,
             "--dest",
             out_path,
         ]
@@ -28,21 +23,16 @@ def test_save_points(tmpdir, alignment_url):
 
 
 @pytest.mark.skip
-@pytest.mark.parametrize(
-    "alignment_url",
-    [
-        "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/bigstitcher.xml"
-    ],
-)
-def test_save_neuroglancer(tmpdir, alignment_url):
-    points_url = os.path.join(alignment_url, "tile_alignment_visualization", "points")
+@pytest.mark.parametrize('bigstitcher_xml', [0], indirect=True)
+def test_save_neuroglancer(tmpdir, bigstitcher_xml):
+    points_url = os.path.join(bigstitcher_xml, "tile_alignment_visualization", "points")
     out_path = os.path.join(str(tmpdir), "tile_alignment_visualization", "neuroglancer")
     run_result = subprocess.run(
         [
             "matchviz",
             "ngjson",
             "--alignment-url",
-            alignment_url,
+            bigstitcher_xml,
             "--points-url",
             points_url,
             "--dest-path",
@@ -52,8 +42,13 @@ def test_save_neuroglancer(tmpdir, alignment_url):
     assert run_result.returncode == 0
 
 
-@pytest.mark.skip
-def test_summarize_points():
-    alignment_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/"
+@pytest.mark.parametrize('bigstitcher_xml', [0], indirect=True)
+def test_summarize_points(bigstitcher_xml):
     runner = CliRunner()
-    _ = runner.invoke(tabulate_matches_cli, ["--alignment-url", alignment_url])
+    result = runner.invoke(tabulate_matches_cli, ["--bigstitcher-xml", bigstitcher_xml])
+    assert result.exit_code == 0
+    head = (
+        "image_name,id_self,id_other,num_matches,x_coord_self,y_coord_self,z_coord_self\n"
+        "tile_x_0000_y_0000_z_0000_ch_488,0,1,4437,-7096.0,-23408.0003,-28672.0\n"
+        )
+    assert result.output.startswith(head)

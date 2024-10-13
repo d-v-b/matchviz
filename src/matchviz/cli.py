@@ -12,6 +12,7 @@ from matchviz import (
     create_neuroglancer_state,
 )
 from matchviz.bigstitcher import (
+    bdv_to_neuroglancer,
     fetch_summarize_matches,
     get_tilegroup_url,
     read_bigstitcher_xml,
@@ -24,9 +25,9 @@ from matchviz.neuroglancer_styles import (
 )
 import structlog
 from s3fs import S3FileSystem
-
+import neuroglancer
 from matchviz.plot import plot_matches
-
+from pydantic_bigstitcher import SpimData2
 
 @click.group("matchviz")
 def cli(): ...
@@ -181,7 +182,6 @@ def save_neuroglancer_json(
 
 @cli.command("tabulate-matches")
 @click.option("--bigstitcher-xml", type=click.STRING, required=True)
-@click.option("--interest-points", type=click.STRING, default=None)
 @click.option("--output", type=click.STRING, default="csv")
 def tabulate_matches_cli(bigstitcher_xml: str, output: Literal["csv"] | None):
     """
@@ -197,3 +197,51 @@ def tabulate_matches_cli(bigstitcher_xml: str, output: Literal["csv"] | None):
         click.echo(summarized.write_csv())
     else:
         raise ValueError(f'Format {output} is not recognized. Allowed values: ("csv",)')
+
+
+@click.command()
+@click.option("--bigstitcher-xml", type=click.STRING, required=True)
+@click.option("--host", type=click.STRING, default=None)
+@click.option("--view-setups", type=click.STRING, default=None)
+@click.option("--channels", type=click.STRING, default=None)
+@click.option("--contrast_limits", type=click.STRING, default=None)
+@click.option("--bind-address", type=click.STRING, default="localhost")
+def view_bdv_cli(
+    bigstitcher_xml: str,
+    host: str | None,
+    view_setups: str | None,
+    channels: str | None,
+    contrast_limits: str | None,
+    bind_address: str,
+):
+    viewer = view_bdv(
+        bs_model=parse_url(bigstitcher_xml), 
+        host=host,
+        view_setups=view_setups,
+        channels=channels,
+        contrast_limits=contrast_limits,
+        bind_address=bind_address
+    )
+
+    print(f'Viewer link: {viewer}')
+    input('Press enter to exit')
+
+def view_bdv(
+        *, 
+        bs_model: SpimData2, 
+        host: URL | None = None, 
+        view_setups: str | None = None, 
+        channels: str | None = None,
+        contrast_limits: str | None = None,
+        bind_address: str,
+        ):
+    state = bdv_to_neuroglancer(
+        bs_model, 
+        anon=True,
+        host=host,
+        view_setups=view_setups,
+        channels=channels,
+        display_settings = {'start': 100, 'stop': 200, 'min': 0, 'max': 400},)
+    viewer = neuroglancer.Viewer()
+    viewer.set_state(state)
+    return viewer

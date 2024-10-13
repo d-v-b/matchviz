@@ -54,7 +54,7 @@ def bdv_to_neuroglancer(
         host: URL | None = None,
         view_setups: Literal["all"] | Iterable[int] = 'all',
         channels: Literal["all"] | Iterable[int] = 'all',
-        display_settings: dict[str, Any]) -> neuroglancer.ViewerState:
+        display_settings: dict[str, Any] | None = None) -> neuroglancer.ViewerState:
     
     bs_model = read_bigstitcher_xml(xml_path, anon=anon)
     unit = bs_model.sequence_description.view_setups.elements[0].voxel_size.unit
@@ -362,7 +362,7 @@ def get_tile_coords(bs_model: SpimData2, nominal_grid=True) -> dict[int, Coords]
     # get all transformations for all view_setups
     coords_by_view_setup: dict[int, Coords] = {}
     for vs, vr in zip(
-        bs_model.sequence_description.view_setups.view_setups,
+        bs_model.sequence_description.view_setups.elements,
         bs_model.view_registrations.elements,
     ):
         transforms = tuple(v.to_transform() for v in vr.view_transforms)
@@ -553,7 +553,6 @@ def save_annotations(
         )
     log.info(f"Completed saving points / matches after {time.time() - start:0.4f}s.")
 
-
 def save_interest_points(
     *,
     bs_model: SpimData2,
@@ -640,7 +639,7 @@ def summarize_matches(
     tile_coords = get_tile_coords(bs_model)
 
     image_names = tuple(
-        v.name for v in bs_model.sequence_description.view_setups.view_setups
+        v.name for v in bs_model.sequence_description.view_setups.elements
     )
 
     # polars dataframes keyed by bigstitcher image names
@@ -693,8 +692,7 @@ def fetch_all_matches(
     vips = bs_model.view_interest_points
     matches_dict: dict[str, pl.DataFrame | BaseException | None] = {}
     futures_dict = {}
-
-    for ip in vips.data:
+    for ip in vips.elements:
         fut = pool.submit(
             load_points_tile,
             store=n5_interest_points_url,
