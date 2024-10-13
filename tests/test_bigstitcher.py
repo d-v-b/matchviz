@@ -52,5 +52,3 @@ def test_bdv_to_neuroglancer() -> None:
         view_setups='all')
     viewer = neuroglancer.Viewer()
     viewer.set_state(viewer_state)
-    print(viewer)
-    breakpoint()
