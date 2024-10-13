@@ -199,7 +199,7 @@ def tabulate_matches_cli(bigstitcher_xml: str, output: Literal["csv"] | None):
         raise ValueError(f'Format {output} is not recognized. Allowed values: ("csv",)')
 
 
-@click.command()
+@cli.command('view-bdv')
 @click.option("--bigstitcher-xml", type=click.STRING, required=True)
 @click.option("--host", type=click.STRING, default=None)
 @click.option("--view-setups", type=click.STRING, default=None)
