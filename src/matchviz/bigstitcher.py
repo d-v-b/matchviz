@@ -1,8 +1,8 @@
 from __future__ import annotations
-from itertools import accumulate, product
+from itertools import accumulate
 import pydantic_bigstitcher.transform
 from zarr import N5FSStore
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
 import re
 import time
@@ -20,8 +20,9 @@ from matchviz.core import (
     tile_coordinate_to_rgba,
     translate_points_xyz,
 )
-from matchviz.types import Coords, TileCoordinate
-
+from matchviz.transform import apply_hoaffine, compose_hoaffines, hoaffine_to_array
+from matchviz.types import TileCoordinate
+from pydantic_bigstitcher.transform import HoAffine
 if TYPE_CHECKING:
     pass
 
@@ -34,7 +35,13 @@ from pydantic_bigstitcher import SpimData2, ViewSetup
 import pydantic_bigstitcher
 from yarl import URL
 import neuroglancer
+
 np.random.seed(0)
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SetupTimepoint:
+    setup: int
+    timepoint: int
+
 def read_bigstitcher_xml(url: URL, anon: bool = True) -> SpimData2:
     fs, path = fsspec.url_to_fs(str(url), anon=anon)
     bs_xml = fs.cat_file(path)
@@ -52,21 +59,21 @@ def bdv_to_neuroglancer(
         *,
         anon: bool=True,
         host: URL | None = None,
+        transform_index: int = -1,
         view_setups: Literal["all"] | Iterable[int] = 'all',
         channels: Literal["all"] | Iterable[int] = 'all',
         display_settings: dict[str, Any] | None = None) -> neuroglancer.ViewerState:
     
     bs_model = read_bigstitcher_xml(xml_path, anon=anon)
-    unit = bs_model.sequence_description.view_setups.elements[0].voxel_size.unit
-    scales = tuple(map(float, bs_model.sequence_description.view_setups.elements[0].voxel_size.size.split(" ")))
+    sample_vs = bs_model.sequence_description.view_setups.elements[0]
+    unit = sample_vs.voxel_size.unit
+    scales = base_scale_dict = {dim: float(x) for x, dim in zip(sample_vs.voxel_size.size.split(' '), ('x','y','z')) }
     dimension_names = ["z", "y", "x"]
     units = [unit] * len(dimension_names)
 
     output_space = neuroglancer.CoordinateSpace(
         names=dimension_names,
-        scales=[
-            scales[0],
-        ] * len(dimension_names),
+        scales=[scales[k] for k in dimension_names],
         units=units,
     )
 
@@ -145,24 +152,27 @@ def bdv_to_neuroglancer(
 
         # bigstitcher stores the transformations in reverse order, i.e. the 
         # last transform in the series is the first one in the list
-
+        
         tforms = tuple(t.to_transform() for t in reversed(view_reg.view_transforms))
-        # for zarr data, remove the translation to nominal grid transform
-        tforms_filtered = tuple(filter(lambda v: v.name != "Translation to Nominal Grid", tforms))
+        # for zarr data, replace the translation to nominal grid transform because neuroglancer
+        # infers the position from zarr metadata
+        if image_format == 'zarr':
+            tforms_filtered = tuple(filter(lambda v: v.name != "Translation to Nominal Grid", tforms))
+        else:
+            tforms_filtered = tforms
+        
         hoaffines = [t.transform for t in tforms_filtered]
         
         composed_hoaffs = tuple(accumulate(hoaffines, partial(compose_hoaffines, dimensions=dimension_names)))
-
         # neuroglancer expects ndim x ndim + 1 matrix
         matrix = hoaffine_to_array(
-            composed_hoaffs[-1], 
+            composed_hoaffs[transform_index], 
             dimensions=dimension_names
             )[:-1]
         
         # convert translations into the output coordinate space
         base_scale_dict = {dim: float(x) for x, dim in zip(view_setup.voxel_size.size.split(' '), ('x','y','z')) }
         scales = [base_scale_dict[dim] for dim in dimension_names]
-        scales = [min(scales)] * len(scales)
         image_name = ''
 
         image_source = f'{image_format}://{image_path}'
@@ -244,13 +254,13 @@ def image_name_to_tile_coord(image_name: str) -> TileCoordinate:
     return coords_out
 
 
-def parse_idmap(data: dict[str, int]) -> dict[tuple[int, int, str], int]:
+def parse_idmap(data: dict[str, int]) -> dict[tuple[str, str, str], str]:
     """
-    convert {'0,1,beads': 0} to {(0, 1, "beads"): 0}
+    convert {'0,1,beads': 0} to {('0', '1', "beads"): '0'}
     """
     parts = map(lambda k: k.split(","), data.keys())
     # convert first two elements to int, leave the last as str
-    parts_normalized = map(lambda v: (int(v[0]), int(v[1]), v[2]), parts)
+    parts_normalized = map(lambda v: (v[0], v[1], v[2]), parts)
     return dict(zip(parts_normalized, data.values()))
 
 
@@ -269,7 +279,10 @@ def tile_coord_to_image_name(coord: TileCoordinate) -> str:
 
 
 def parse_matches(
-    *, name: str, data: np.ndarray, id_map: dict[tuple[int, int, str], int]
+    *, 
+    name: str, 
+    data: np.ndarray, 
+    id_map: dict[tuple[int, int, str], int]
 ):
     """
     Convert a name, match data, and an id mapping to a polars dataframe that contains
@@ -291,19 +304,29 @@ def parse_matches(
     data_copy[:, -1] = np.vectorize(remap.get)(data[:, -1])
 
     match_result = pl.DataFrame(
-        {
-            "point_self": data_copy[:, 0],
-            "point_other": data_copy[:, 1],
-            "id_self": [id_self] * data_copy.shape[0],
-            "id_other": data_copy[:, 2],
-        }
+        schema={
+            "point_id_self": pl.Int64, 
+            "point_id_other": pl.Int64, 
+            "image_id_self": pl.String, 
+            "image_id_other": pl.String
+        },
+        data={
+            "point_id_self": data_copy[:, 0],
+            "point_id_other": data_copy[:, 1],
+            "image_id_self": [id_self] * data_copy.shape[0],
+            "image_id_other": data_copy[:, 2],
+        },
+        strict=False
     )
     return match_result
 
 
-def load_points_tile(
-    *, store: str | URL | N5FSStore, path: str, anon: bool = True
-) -> tuple[pl.DataFrame, pl.DataFrame | None]:
+def read_interest_points(
+    *,
+    identifier: SetupTimepoint, 
+    store: str | URL | N5FSStore, 
+    path: str, anon: bool = True
+) -> pl.DataFrame:
     """
     Load interest points and optionally correspondences from a bigstitcher-formatted n5 group as
     polars dataframes for a single tile.
@@ -329,63 +352,111 @@ def load_points_tile(
         )
 
     correspondences_group = zarr.open_group(
-        store=store_parsed, path=f"{path}/correspondences", mode="r"
+        store=store_parsed, 
+        path=f"{path}/correspondences", mode="r"
     )
-
-    matches_exist = "data" in correspondences_group
-    if not matches_exist:
-        log.info(f"No matches found for {get_url(store_parsed)}.")
 
     # points are saved as [num_points, [x, y, z]]
     loc = interest_points_group["loc"][:]
-
+    intensities = interest_points_group["intensities"][:].squeeze().tolist()
     ids = interest_points_group["id"][:]
     ids_list = ids.squeeze().tolist()
 
-    if matches_exist:
+    points_result = pl.DataFrame(
+        schema={
+            "image_id_self": pl.String,
+            "point_id_self": pl.Int64, 
+            "loc_xyz": pl.Array(pl.Float64, 3), 
+            "intensity": pl.Float32,
+            'point_id_other': pl.Int64,
+            'image_id_other': pl.String
+            },
+        data={
+            "image_id_self": [identifier.setup] * len(ids_list),
+            "point_id_self": ids_list, 
+            "loc_xyz": loc, 
+            "intensity": intensities,
+            'image_id_other': [None] * len(ids_list),
+            'point_id_other': [None] * len(ids_list),
+            })
+    
+    matches_exist = "data" in correspondences_group
+    
+    if not matches_exist:
+        log.info(f"No matches found for {get_url(store_parsed)}.")
+        return points_result
+    else:
         id_map = parse_idmap(correspondences_group.attrs["idMap"])
         matches = np.array(correspondences_group["data"])
         match_result = parse_matches(name=path, data=matches, id_map=id_map)
-    else:
-        match_result = None
-    return pl.DataFrame(
-        {"id": ids_list, "loc_xyz": loc},
-        schema={"id": pl.Int64, "loc_xyz": pl.Array(pl.Float64, 3)},
-    ), match_result
+        return points_result.drop("image_id_other", "point_id_other").join(
+            match_result.drop('image_id_self'), 
+            on="point_id_self", 
+            how="left",
+            coalesce=True
+        )
 
-
-def get_tile_coords(bs_model: SpimData2, nominal_grid=True) -> dict[int, Coords]:
+def get_interest_points(
+    *,
+    bs_model: SpimData2,
+    n5_interest_points_url: URL,
+    pool: ThreadPoolExecutor,
+    anon: bool = True,
+) -> dict[ViewSetup, pl.DataFrame]:
     """
-    Get the source coordinates of the tiles referenced in bigstitcher xml data. Returns a dict with int
-    keys (id numbers of tiles) and Coords values ()
+    Load all the match data from the n5 datasets containing it.
+    Takes a URL to an n5 group emitted by bigstitcher for storing interest points, e.g.
+    s3://bucket/dataset/interestpoints.n5/.
+
+    This function uses a thread pool to speed things up.
+    """
+    vips = bs_model.view_interest_points
+    result_dict: dict[ViewSetup, pl.DataFrame] = {}
+    identifiers = tuple(SetupTimepoint(
+            setup=int(ip.setup), 
+            timepoint=int(ip.timepoint)) for ip in vips.elements)
+    futures = []
+    for identifier, ip in zip(identifiers, vips.elements):
+        futures.append(pool.submit(
+            read_interest_points,
+            identifier=identifier,
+            store=n5_interest_points_url,
+            path=ip.path,
+            anon=anon,
+        ))
+    wait(futures)
+    for identifier, result in zip(identifiers, futures):
+        result_dict[identifier] = result.result()
+        
+    return result_dict
+
+
+def get_transforms(
+        bs_model: SpimData2, 
+        *,
+        composed: bool = False) -> dict[str, tuple[pydantic_bigstitcher.transform.HoAffine, ...]]:
+    """
+    Get affine transform of view setups referenced in bigstitcher xml data.
     """
     # get all transformations for all view_setups
-    coords_by_view_setup: dict[int, Coords] = {}
+    result: dict[int, tuple[HoAffine[Literal["x", "y", "z"]], ...]] = {}
     for vs, vr in zip(
         bs_model.sequence_description.view_setups.elements,
         bs_model.view_registrations.elements,
     ):
-        transforms = tuple(v.to_transform() for v in vr.view_transforms)
-        # note that we reverse the order of the transformations, because bigsticher appends new transformations
-        # to the front of the list, but we want to iterate with the first applied transform first.
-        translation_array = np.array(
-            tuple(tuple(t.transform.translation.values()) for t in reversed(transforms))
-        )
-        translation_array_summed = np.cumsum(translation_array, axis=0)
-        if nominal_grid:
-            for row in translation_array_summed:
-                if not np.all(row == 0):
-                    final_translation = row
-                    break
-        else:
-            final_translation = translation_array_summed[-1]
-        bs_voxel_size_xyz = tuple(map(float, vs.voxel_size.size.split(" ")))
-        coords_by_view_setup[int(vs.ident)] = {
-            "z": {"trans": final_translation[2], "scale": bs_voxel_size_xyz[2]},
-            "y": {"trans": final_translation[1], "scale": bs_voxel_size_xyz[1]},
-            "x": {"trans": final_translation[0], "scale": bs_voxel_size_xyz[0]},
-        }
-    return coords_by_view_setup
+        key = vs.ident
+        # note that transforms are returned in reverse order relative to the bigstitcher xml document
+        tforms = tuple(t.to_transform() for t in reversed(vr.view_transforms))
+        # for zarr data, remove the translation to nominal grid transform
+        hoaffines = tuple(t.transform for t in tforms)
+
+        if not composed:
+            result[key] = tuple(hoaffines)
+
+        if composed:
+            result[key] = tuple(accumulate(hoaffines, partial(compose_hoaffines, dimensions=("x", "y", "z"))))
+    
+    return result
 
 
 class InterestPointsGroupMeta(BaseModel):
@@ -417,9 +488,9 @@ class PointsGroup(GroupSpec[InterestPointsGroupMeta, InterestPointsMembers]):
 def save_annotations(
     *,
     bs_model: SpimData2,
-    image_id: int,
+    image_id: str,
     alignment_url: URL | str,
-    dest_url: URL | str,
+    dest_url: URL | str
 ):
     """
     Load points and correspondences (matches) between a single tile an all other tiles, and save as neuroglancer
@@ -432,16 +503,18 @@ def save_annotations(
 
     If matches are not found, then just the interest points will be saved.
     """
-
-    ips_by_setup = {int(v.setup): v for v in bs_model.view_interest_points.data}
-    view_setups_by_id = {int(v.ident): v for v in bs_model.sequence_description.view_setups.view_setups}
+    unit = bs_model.sequence_description.view_setups.elements[0].voxel_size.unit
+    base_scales = tuple(map(float, bs_model.sequence_description.view_setups.elements[0].voxel_size.size.split(" ")))
+    dimension_names = ["x", "y", "z"]
+    base_units = [unit] * len(dimension_names)
+    ips_by_setup = {v.setup: v for v in bs_model.view_interest_points.elements}
+    view_setups_by_id = {v.ident: v for v in bs_model.sequence_description.view_setups.elements}
     
     image_name = view_setups_by_id[image_id].name
 
     log = structlog.get_logger(image_name=image_name)
     start = time.time()
     log.info(f"Begin saving annotations for image id {image_id}")
-    tile_coords: dict[int, Coords] = get_tile_coords(bs_model=bs_model)
     interest_points_url = parse_url(alignment_url) / "interestpoints.n5"
     dest_url_parsed = parse_url(dest_url)
     points_url = dest_url_parsed.joinpath(f"points/{image_name}.precomputed")
@@ -451,18 +524,16 @@ def save_annotations(
     log.info(f"Saving matches to {lines_url}")
 
     ip_store = zarr.N5FSStore(str(interest_points_url))
-    base_coords = tile_coords[image_id]
 
-    ip_path = bs_model.view_interest_points.data[image_id].path
+    ip_path = bs_model.view_interest_points.elements[int(image_id)].path
     match_group = zarr.open_group(
         store=ip_store, path=f"{ip_path}/correspondences", mode="r"
     )
 
-    to_access: tuple[int, ...] = (image_id,)
+    to_access: tuple[str, ...] = (image_id,)
     id_map_normalized = {}
     # tuple of view_setup ids to load
-    points_map: dict[int, pl.DataFrame] = {}
-    matches_map: dict[int, None | pl.DataFrame] = {}
+    points_map: dict[str, pl.DataFrame] = {}
 
     matches_exist = "data" in match_group
 
@@ -480,25 +551,28 @@ def save_annotations(
         to_access += (key[1],)
 
     for img_id in to_access:
-        coords = tile_coords[img_id]
         _path = ips_by_setup[img_id].path
-        points_data, match_data = load_points_tile(
-            store=ip_store, path=_path, anon=True
+        points_data = read_interest_points(
+            identifier=SetupTimepoint(setup=img_id, timepoint=0),
+            store=ip_store, 
+            path=_path, 
+            anon=True
         )
-        points_transformed = translate_points_xyz(
-            points_array=points_data["loc_xyz"].to_numpy(), coords=coords
-        )
-        points_data = points_data.with_columns(
-            loc_xyz=pl.Series(points_transformed, dtype=pl.Array(pl.Float64, 3))
-        )
-
+        
+        transform = get_transforms(bs_model=bs_model, composed=True)[img_id]
+        # not clear which transformation to use here
+        locs_transformed = apply_hoaffine(
+            tx=transform[-1], 
+            data=points_data['loc_xyz'].to_numpy(), 
+            dimensions=dimension_names)
+        
+        points_data = points_data.with_columns(loc_xyz_transformed=locs_transformed)
         points_map[img_id] = points_data
-        matches_map[img_id] = match_data
 
-    annotation_scales = [base_coords[dim]["scale"] for dim in ("x", "y", "z")]  # type: ignore
-    annotation_units = ["um", "um", "um", "s"]
     annotation_space = neuroglancer.CoordinateSpace(
-        names=["x", "y", "z"], scales=annotation_scales, units=annotation_units
+        names=dimension_names, 
+        scales=base_scales, 
+        units=base_units
     )
 
     try:
@@ -511,38 +585,30 @@ def save_annotations(
     point_map_self = points_map[image_id]
 
     point_data = points_map[image_id]
-    id_data = point_map_self.get_column("id").to_list()
+    id_data = point_map_self.get_column("point_id_self").to_list()
+    
     write_point_annotations(
         points_url,
-        points=point_data["loc_xyz"].to_numpy(),
+        points=point_data["loc_xyz_transformed"].to_numpy(),
         ids=id_data,
         coordinate_space=annotation_space,
         point_color=point_color,
     )
-    if matches_map[image_id] is not None:
+    
+    matches = point_data.filter(pl.col('point_id_other').is_not_null())
+
+    if len(matches) > 0:
         log.info(f"Saving matches to {lines_url}.")
-        match_entry = matches_map[image_id]
-        if match_entry is None:
-            raise ValueError(f"Missing match data for {image_id}")
-        match_entry = cast(pl.DataFrame, match_entry)
-        for row in match_entry.rows():
-            point_self, point_other, id_self, id_other = row
-            row_self = point_map_self.row(
-                by_predicate=(pl.col("id") == point_self), named=True
-            )
-            line_start = row_self["loc_xyz"]
-            try:
-                row_other = points_map[id_other].row(
-                    by_predicate=(pl.col("id") == point_other), named=True
-                )
-                line_stop = row_other["loc_xyz"]
+        for image_id_other_tup, match_group in matches.group_by("image_id_other"):
+            image_id_other = image_id_other_tup[0]
+            joined = points_map[image_id_other].join(
+                match_group, 
+                left_on="point_id_self", 
+                right_on="point_id_other", 
+                how="inner")
 
-            except pl.exceptions.NoRowsReturnedError:
-                log.info(f"indexing error with {point_other} into vs_id {id_other}")
-                line_stop = line_start
-
-            line_starts.append(line_start)
-            line_stops.append(line_stop)
+            line_starts.extend(joined['loc_xyz_transformed'].to_numpy().tolist())
+            line_stops.extend(joined['loc_xyz_transformed_right'].to_numpy().tolist())
 
         lines_loc = tuple(zip(*(line_starts, line_stops)))
         write_line_annotations(
@@ -566,11 +632,11 @@ def save_interest_points(
     the directory name <out_prefix>/<image_name>.precomputed
     """
 
-    view_setup_by_ident: dict[int, ViewSetup] = {
-        int(v.ident): v for v in bs_model.sequence_description.view_setups.view_setups
+    view_setup_by_ident: dict[str, ViewSetup] = {
+        v.ident: v for v in bs_model.sequence_description.view_setups.elements
     }
 
-    ips_by_setup = {int(v.setup): v for v in bs_model.view_interest_points.data}
+    ips_by_setup = {v.setup: v for v in bs_model.view_interest_points.elements}
     
     if image_names is None:
         image_names_parsed = [
@@ -579,14 +645,12 @@ def save_interest_points(
     else:
         image_names_parsed = image_names
 
-    # generate a coordinate grid for all the images
-
     if bs_model.view_interest_points is None:
         raise ValueError(
             "No view interest points were found in the bigstitcher xml file."
         )
 
-    for setup_id in ips_by_setup:
+    for setup_id in image_names_parsed:
         save_annotations(
             bs_model=bs_model,
             image_id=setup_id,
@@ -602,7 +666,7 @@ def fetch_summarize_matches(
     log = structlog.get_logger()
     bs_model = read_bigstitcher_xml(bigstitcher_xml)
     interest_points_url = bigstitcher_xml.parent.joinpath("interestpoints.n5")
-    all_matches = fetch_all_matches(
+    all_matches = get_interest_points(
         bs_model=bs_model,
         n5_interest_points_url=interest_points_url,
         pool=pool,
@@ -636,7 +700,7 @@ def summarize_match(match: pl.DataFrame) -> pl.DataFrame:
 def summarize_matches(
     bs_model: SpimData2, matches_dict: dict[str, pl.DataFrame]
 ) -> pl.DataFrame:
-    tile_coords = get_tile_coords(bs_model)
+    tile_coords = get_transforms(bs_model)
 
     image_names = tuple(
         v.name for v in bs_model.sequence_description.view_setups.elements
@@ -675,93 +739,6 @@ def summarize_matches(
     return result
 
 
-def fetch_all_matches(
-    *,
-    bs_model: SpimData2,
-    n5_interest_points_url: URL,
-    pool: ThreadPoolExecutor,
-    anon: bool = True,
-) -> dict[str, pl.DataFrame | BaseException | None]:
-    """
-    Load all the match data from the n5 datasets containing it.
-    Takes a URL to an n5 group emitted by bigstitcher for storing interest points, e.g.
-    s3://bucket/dataset/interestpoints.n5/.
 
-    This function uses a thread pool to speed things up.
-    """
-    vips = bs_model.view_interest_points
-    matches_dict: dict[str, pl.DataFrame | BaseException | None] = {}
-    futures_dict = {}
-    for ip in vips.elements:
-        fut = pool.submit(
-            load_points_tile,
-            store=n5_interest_points_url,
-            path=ip.path,
-            anon=anon,
-        )
-        futures_dict[fut] = ip.path
 
-    for result in as_completed(futures_dict):
-        key = futures_dict[result]
-        try:
-            _, matches = result.result()
-            matches_dict[key] = matches
-        except BaseException:
-            matches_dict[key] = result.exception()
-
-    return matches_dict
-
-def hoaffine_to_array(
-        tx: pydantic_bigstitcher.transform.HoAffine[Any],
-        dimensions: tuple[str, ...]) -> np.ndarray:
-    out = np.eye((len(dimensions) + 1))
-    affine = affine_to_array(tx.affine, dimensions)
-    translation = translate_to_array(tx.translation, dimensions)
-    out[:-1, :-1] = affine
-    out[:-1,-1] = translation
-    return out
-
-def affine_to_array(
-        tx: pydantic_bigstitcher.transform.MatrixMap[Any],
-        dimensions: tuple[str, ...]) -> np.ndarray:
-    assert set(dimensions) == set(tx.keys())
-    out = np.zeros((
-        len(tx), ) * 2)
-    
-    for idx, (dim_outer, dim_inner) in enumerate(product(dimensions, dimensions)):
-        out.ravel()[idx] = tx[dim_outer][dim_inner]
-    
-    return out
-
-def array_to_affine(array: np.ndarray, dimensions: tuple[str, ...]) -> pydantic_bigstitcher.transform.MatrixMap[Any]:
-    return dict(zip(dimensions, (array_to_translate(row, dimensions) for row in array)))
-
-def translate_to_array(
-        tx: pydantic_bigstitcher.transform.VectorMap[Any],
-        dimensions: tuple[str, ...]) -> np.ndarray:
-    assert set(dimensions) == set(tx.keys())
-    out = np.zeros(len(tx))
-    for idx, dim in enumerate(dimensions):
-        out[idx] = tx[dim]
-    return out
-        
-def array_to_translate(array: np.ndarray, dimensions: tuple[str, ...]) -> pydantic_bigstitcher.transform.VectorMap[Any]:
-    return dict(zip(dimensions, array))        
-
-def compose_hoaffines(
-        tx_a: pydantic_bigstitcher.transform.HoAffine[Any], 
-        tx_b: pydantic_bigstitcher.transform.HoAffine[Any],
-        *,
-        dimensions: tuple[str, ...]
-        ) -> pydantic_bigstitcher.transform.HoAffine[Any]:
-
-        homogeneous_matrix = hoaffine_to_array(tx_b, dimensions=dimensions) @ hoaffine_to_array(tx_a, dimensions=dimensions)
-
-        new_affine = homogeneous_matrix[:-1, :-1]
-        new_trans = homogeneous_matrix[:-1,-1]
-
-        return pydantic_bigstitcher.transform.HoAffine(
-            affine=array_to_affine(
-                new_affine, dimensions=dimensions), 
-                translation=array_to_translate(new_trans, dimensions=dimensions))
             

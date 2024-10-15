@@ -1,8 +1,25 @@
+from concurrent.futures import ThreadPoolExecutor
 from pydantic_bigstitcher.transform import VectorMap, MatrixMap, HoAffine
 import numpy as np
+import pytest
 from yarl import URL
-from matchviz.bigstitcher import affine_to_array, array_to_affine, array_to_translate, bdv_to_neuroglancer, compose_hoaffines, hoaffine_to_array, read_bigstitcher_xml, translate_to_array
+from matchviz.bigstitcher import bdv_to_neuroglancer, get_interest_points, read_bigstitcher_xml, read_interest_points
 import neuroglancer
+
+from matchviz.transform import affine_to_array, array_to_affine, array_to_translate, compose_hoaffines, hoaffine_to_array, translate_to_array
+
+@pytest.mark.parametrize('bigstitcher_xml', [0], indirect=True)
+def test_read_points(bigstitcher_xml: str) -> None:
+    bs_url = URL(bigstitcher_xml)
+    pool = ThreadPoolExecutor(max_workers=8)
+    bs_model = read_bigstitcher_xml(bs_url)
+
+    result = get_interest_points(
+        bs_model=bs_model,
+        n5_interest_points_url=bs_url.parent / "interestpoints.n5",
+        pool=pool,
+        anon=True,
+        )
 
 def test_translate_to_array() -> None:
     tx_a: VectorMap = {'x': 1, 'y': 2}
@@ -40,12 +57,12 @@ def test_hoaffine_to_array() -> None:
     assert np.array_equal(observed, expected)
 
 
-def test_bdv_to_neuroglancer() -> None:    
-    bs_xml = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/bigstitcher.xml"
+@pytest.mark.parametrize('bigstitcher_xml', [0], indirect=True)
+def test_bdv_to_neuroglancer(bigstitcher_xml: str) -> None:    
     host = None
-    bs_model = read_bigstitcher_xml(bs_xml)
+    bs_model = read_bigstitcher_xml(bigstitcher_xml)
     viewer_state = bdv_to_neuroglancer(
-        URL(bs_xml), 
+        URL(bigstitcher_xml), 
         host=host,
         display_settings = {'start': 100, 'stop': 200, 'min': 0, 'max': 400},
         channels=[0],

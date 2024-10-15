@@ -54,7 +54,6 @@ def ome_ngff_to_coords(url: str | URL) -> Coords:
         for axis, s, t in zip(multi_meta.axes, scale, trans)
     }  # type: ignore
 
-
 def scale_point(point: Sequence[float], params: Sequence[float]):
     return np.multiply(point, params)
 
@@ -76,7 +75,9 @@ def translate_point(point: Sequence[float], params: Sequence[float]):
     return np.add(point, params)
 
 
-def translate_points_xyz(*, points_array: np.ndarray, coords: Coords) -> np.ndarray:
+def translate_points_xyz(
+        *, 
+        points_array: np.ndarray, coords: Coords) -> np.ndarray:
     """
     Apply a translation in world coordinates
     """
@@ -150,7 +151,9 @@ def parse_url(data: object) -> URL:
             if maybe_url.is_absolute():
                 return maybe_url.with_scheme("file")
             else:
-                return URL.build(scheme="file", path=maybe_url.path.rstrip("/"))
+                # make relative path absolute
+                maybe_url = URL(str(pathlib.Path(str(maybe_url)).absolute()))
+                return URL.build(scheme="file", path=maybe_url.path)
         else:
             return maybe_url
     if isinstance(data, pathlib.Path):

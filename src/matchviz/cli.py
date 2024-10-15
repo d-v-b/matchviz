@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 import json
+import socket
 from typing import Iterable, Literal, Sequence
 import click
 import fsspec
@@ -75,26 +76,29 @@ def plot_matches_cli(
 
 
 @cli.command("save-points")
-@click.option("--src", type=click.STRING, required=True)
+@click.option("--bigstitcher-xml", type=click.STRING, required=True)
 @click.option("--dest", type=click.STRING, required=True)
 @click.option("--image-names", type=click.STRING)
-def save_interest_points_cli(src: str, dest: str, image_names: str | None):
+def save_interest_points_cli(bigstitcher_xml: str, dest: str, image_names: str | None):
     """
     Save bigstitcher interest points from n5 to neuroglancer precomputed annotations.
     """
     # strip trailing '/' from src and dest
-    src_parsed = URL(src.rstrip("/"))
-    dest_parsed = URL(dest.rstrip("/"))
+    src_parsed = parse_url(bigstitcher_xml)
+    dest_parsed = parse_url(dest)
+
     if image_names is not None:
         image_names_parsed = image_names.replace(" ", "").split(",")
     else:
         image_names_parsed = image_names
+    
     save_points(
         bigstitcher_url=src_parsed, dest=dest_parsed, image_names=image_names_parsed
     )
 
 
-def save_points(bigstitcher_url: URL, dest: URL, image_names: Iterable[str] | None = None):
+def save_points(
+        bigstitcher_url: URL, dest: URL, image_names: Iterable[str] | None = None):
     bs_model = read_bigstitcher_xml(bigstitcher_url)
     save_interest_points(
         bs_model=bs_model,
@@ -201,26 +205,41 @@ def tabulate_matches_cli(bigstitcher_xml: str, output: Literal["csv"] | None):
 
 @cli.command('view-bdv')
 @click.option("--bigstitcher-xml", type=click.STRING, required=True)
+@click.option("--transform-index", type=click.INT, default=-1)
 @click.option("--host", type=click.STRING, default=None)
-@click.option("--view-setups", type=click.STRING, default=None)
-@click.option("--channels", type=click.STRING, default=None)
-@click.option("--contrast_limits", type=click.STRING, default=None)
+@click.option("--view-setups", type=click.STRING, default='all')
+@click.option("--channels", type=click.STRING, default='all')
+@click.option("--contrast-limits", type=click.STRING, default=None)
 @click.option("--bind-address", type=click.STRING, default="localhost")
 def view_bdv_cli(
     bigstitcher_xml: str,
+    transform_index: int,
     host: str | None,
-    view_setups: str | None,
-    channels: str | None,
+    view_setups: str,
+    channels: str,
     contrast_limits: str | None,
     bind_address: str,
 ):
+    if contrast_limits is not None:
+        contrast_limits_parsed = tuple(int(x) for x in contrast_limits.split(','))
+        if len(contrast_limits_parsed) != 2:
+            raise ValueError(
+                f'Contrast limits must be two ints separated by a comma. Got {contrast_limits} instead.')
+    else:
+        contrast_limits_parsed = None
+    
+    if bind_address == "ip":
+        neuroglancer.set_server_bind_address(socket.gethostbyname(socket.gethostname()))
+    else:
+        neuroglancer.set_server_bind_address('localhost')
+    
     viewer = view_bdv(
         bs_model=parse_url(bigstitcher_xml), 
         host=host,
         view_setups=view_setups,
         channels=channels,
-        contrast_limits=contrast_limits,
-        bind_address=bind_address
+        transform_index=transform_index,
+        contrast_limits=contrast_limits_parsed,
     )
 
     print(f'Viewer link: {viewer}')
@@ -232,16 +251,22 @@ def view_bdv(
         host: URL | None = None, 
         view_setups: str | None = None, 
         channels: str | None = None,
-        contrast_limits: str | None = None,
-        bind_address: str,
+        contrast_limits: tuple[int, int],
+        transform_index: int,
         ):
+    if contrast_limits is not None:
+        display_settings = {'start': contrast_limits[0], 'stop': contrast_limits[1], 'min': contrast_limits[0] - abs(contrast_limits[1] - contrast_limits[1]), 'max': contrast_limits[1] + abs(contrast_limits[1] - contrast_limits[1])}
+    else:
+        display_settings = {'start': None, 'stop': None, 'min': None, 'max': None}
     state = bdv_to_neuroglancer(
         bs_model, 
         anon=True,
         host=host,
         view_setups=view_setups,
         channels=channels,
-        display_settings = {'start': 100, 'stop': 200, 'min': 0, 'max': 400},)
+        display_settings=display_settings,
+        transform_index=transform_index
+        )
     viewer = neuroglancer.Viewer()
     viewer.set_state(state)
     return viewer

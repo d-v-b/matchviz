@@ -2,24 +2,18 @@ import pytest
 import subprocess
 import os
 from click.testing import CliRunner
-from matchviz.cli import tabulate_matches_cli
+from matchviz.cli import tabulate_matches_cli, save_interest_points_cli
 
 
-@pytest.mark.skip
 @pytest.mark.parametrize('bigstitcher_xml', [0], indirect=True)
 def test_save_points(tmpdir, bigstitcher_xml):
-    out_path = os.path.join(str(tmpdir), "tile_alignment_visualization")
-    run_result = subprocess.run(
-        [
-            "matchviz",
-            "save-points",
-            "--src",
-            bigstitcher_xml,
-            "--dest",
-            out_path,
-        ]
-    )
-    assert run_result.returncode == 0
+    runner = CliRunner()
+    dest = str(tmpdir)
+    result = runner.invoke(
+        save_interest_points_cli, 
+        ["--bigstitcher-xml", bigstitcher_xml, '--dest', dest],
+        )
+    assert result.exit_code == 0
 
 
 @pytest.mark.skip
