@@ -76,14 +76,14 @@ def test_parse_idmap():
 @pytest.mark.skip
 def test_load_points():
     url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/interestpoints.n5"
-    _ = read_interest_points(store=url, path="tpId_0_viewSetupId_3/beads/", anon=True)
+    _ = load_interest_points(store=url, path="tpId_0_viewSetupId_3/beads/", anon=True)
 
 
 def test_plot_points():
     ip_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/interestpoints.n5"
     image_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38/SPIM.ome.zarr/tile_x_0000_y_0000_z_0000_ch_488.zarr"
     coords = ome_ngff_to_coords(image_url)
-    points_df, match_df = read_interest_points(
+    points_df, match_df = load_interest_points(
         store=ip_url, path="tpId_0_viewSetupId_3/beads/", anon=True
     )
     scale_points(points_df, coords)

@@ -3,7 +3,7 @@ from pydantic_bigstitcher.transform import VectorMap, MatrixMap, HoAffine
 import numpy as np
 import pytest
 from yarl import URL
-from matchviz.bigstitcher import bdv_to_neuroglancer, get_interest_points, read_bigstitcher_xml, read_interest_points
+from matchviz.bigstitcher import bdv_to_neuroglancer, read_all_interest_points, read_bigstitcher_xml, read_interest_points
 import neuroglancer
 
 from matchviz.transform import affine_to_array, array_to_affine, array_to_translate, compose_hoaffines, hoaffine_to_array, translate_to_array
@@ -14,7 +14,7 @@ def test_read_points(bigstitcher_xml: str) -> None:
     pool = ThreadPoolExecutor(max_workers=8)
     bs_model = read_bigstitcher_xml(bs_url)
 
-    result = get_interest_points(
+    result = read_all_interest_points(
         bs_model=bs_model,
         n5_interest_points_url=bs_url.parent / "interestpoints.n5",
         pool=pool,

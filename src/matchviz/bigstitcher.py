@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
 import re
 import time
-from typing import Annotated, Any, Iterable, Literal, cast, TYPE_CHECKING, Iterable
+from typing import Annotated, Any, Literal, cast, TYPE_CHECKING, Iterable
 from typing_extensions import TypedDict, deprecated
 from pydantic import BaseModel, BeforeValidator, Field
 from pydantic_zarr.v2 import ArraySpec, GroupSpec
@@ -18,11 +18,11 @@ from matchviz.core import (
     get_url,
     parse_url,
     tile_coordinate_to_rgba,
-    translate_points_xyz,
 )
 from matchviz.transform import apply_hoaffine, compose_hoaffines, hoaffine_to_array
 from matchviz.types import TileCoordinate
 from pydantic_bigstitcher.transform import HoAffine
+
 if TYPE_CHECKING:
     pass
 
@@ -36,11 +36,14 @@ import pydantic_bigstitcher
 from yarl import URL
 import neuroglancer
 
-np.random.seed(0)
+random.seed(0)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SetupTimepoint:
-    setup: int
+    setup: str
     timepoint: int
+
 
 def read_bigstitcher_xml(url: URL, anon: bool = True) -> SpimData2:
     fs, path = fsspec.url_to_fs(str(url), anon=anon)
@@ -48,136 +51,146 @@ def read_bigstitcher_xml(url: URL, anon: bool = True) -> SpimData2:
     bs_model = SpimData2.from_xml(bs_xml)
     return bs_model
 
-def view_bdv(bs_model: SpimData2, host: URL | None = None):
-    state = bdv_to_neuroglancer(bs_model, host)
-    viewer = neuroglancer.Viewer()
-    viewer.set_state(state)
-    print(viewer)
 
 def bdv_to_neuroglancer(
-        xml_path: URL, 
-        *,
-        anon: bool=True,
-        host: URL | None = None,
-        transform_index: int = -1,
-        view_setups: Literal["all"] | Iterable[int] = 'all',
-        channels: Literal["all"] | Iterable[int] = 'all',
-        display_settings: dict[str, Any] | None = None) -> neuroglancer.ViewerState:
-    
+    xml_path: URL,
+    *,
+    anon: bool = True,
+    host: URL | None = None,
+    transform_index: int = -1,
+    view_setups: Literal["all"] | Iterable[str] = "all",
+    channels: Literal["all"] | Iterable[int] = "all",
+    interest_points: Literal["points", "matches"] | None = None,
+    display_settings: dict[str, Any] | None = None,
+) -> neuroglancer.ViewerState:
     bs_model = read_bigstitcher_xml(xml_path, anon=anon)
     sample_vs = bs_model.sequence_description.view_setups.elements[0]
     unit = sample_vs.voxel_size.unit
-    scales = base_scale_dict = {dim: float(x) for x, dim in zip(sample_vs.voxel_size.size.split(' '), ('x','y','z')) }
+    scales = base_scale_dict = {
+        dim: float(x)
+        for x, dim in zip(sample_vs.voxel_size.size.split(" "), ("x", "y", "z"))
+    }
     dimension_names = ["z", "y", "x"]
     units = [unit] * len(dimension_names)
-
+    points_map = {}
     output_space = neuroglancer.CoordinateSpace(
         names=dimension_names,
         scales=[scales[k] for k in dimension_names],
         units=units,
     )
 
-    state = neuroglancer.ViewerState(
-        dimensions=output_space
-    )
+    state = neuroglancer.ViewerState(dimensions=output_space)
 
-    if bs_model.base_path.path == '.':
+    if bs_model.base_path.path == ".":
         if host is None:
             base_path = xml_path.parent
         else:
             base_path = host
 
     else:
-        raise ValueError(f'Base path {bs_model.base_path.path} is not supported')
-    
+        raise ValueError(f"Base path {bs_model.base_path.path} is not supported")
+
     image_loader = bs_model.sequence_description.image_loader
-    
+
     if image_loader.fmt == "bdv.multimg.zarr":
         image_format = "zarr"
-        if image_loader.zarr.type == 'absolute':
+        if image_loader.zarr.type == "absolute":
             if hasattr(image_loader, "s3bucket"):
-                prefix = URL(f's3://{image_loader.s3bucket}')
+                prefix = URL(f"s3://{image_loader.s3bucket}")
             else:
                 if host is not None:
-                    prefix=host
+                    prefix = host
                 else:
-                    prefix=URL('file:///')
+                    prefix = URL("file:///")
             container_root = prefix / image_loader.zarr.path
         else:
             container_root = base_path / image_loader.zarr.path
 
     elif image_loader.fmt == "bdv.n5":
         image_format = "n5"
-        if image_loader.n5.type == 'absolute':
+        if image_loader.n5.type == "absolute":
             if hasattr(image_loader, "s3bucket"):
-                prefix = f's3://{image_loader.s3bucket}'
+                prefix = f"s3://{image_loader.s3bucket}"
             else:
                 if host is not None:
-                    prefix=host
+                    prefix = host
                 else:
-                    prefix=URL('file:///')
+                    prefix = URL("file:///")
             container_root = URL(prefix) / image_loader.zarr.path
         else:
             container_root = base_path / image_loader.n5.path
     else:
-        raise ValueError(f"Unknown image format: {bs_model.sequence_description.image_loader.fmt}")
+        raise ValueError(
+            f"Unknown image format: {bs_model.sequence_description.image_loader.fmt}"
+        )
 
     for view_reg in bs_model.view_registrations.elements:
         vs_id = view_reg.setup
 
-        if view_setups != 'all' and int(vs_id) not in view_setups:
+        if view_setups != "all" and vs_id not in view_setups:
             continue
 
         maybe_view_setups = tuple(
             filter(
-                lambda v: v.ident == vs_id, 
-                bs_model.sequence_description.view_setups.elements
-                )
+                lambda v: v.ident == vs_id,
+                bs_model.sequence_description.view_setups.elements,
             )
-        
+        )
+
         if len(maybe_view_setups) > 1:
             raise ValueError(f"Ambiguous setup id {vs_id}.")
-        
+
         view_setup = maybe_view_setups[0]
 
-        if channels != 'all' and int(view_setup.attributes.channel) not in channels:
+        if channels != "all" and int(view_setup.attributes.channel) not in channels:
             continue
 
-        if image_format == 'zarr':
+        if image_format == "zarr":
             image_name = view_setup.name
-            image_path = container_root / f'{image_name}.zarr'
+            image_path = container_root / f"{image_name}.zarr"
         else:
-            image_name = f'setup{view_reg.setup}/timepoint{view_reg.timepoint}'
+            image_name = f"setup{view_reg.setup}/timepoint{view_reg.timepoint}"
             image_path = container_root / image_name
 
-        # bigstitcher stores the transformations in reverse order, i.e. the 
+        # bigstitcher stores the transformations in reverse order, i.e. the
         # last transform in the series is the first one in the list
-        
+
         tforms = tuple(t.to_transform() for t in reversed(view_reg.view_transforms))
         # for zarr data, replace the translation to nominal grid transform because neuroglancer
         # infers the position from zarr metadata
-        if image_format == 'zarr':
-            tforms_filtered = tuple(filter(lambda v: v.name != "Translation to Nominal Grid", tforms))
+        if image_format == "zarr":
+            tforms_filtered = tuple(
+                filter(lambda v: v.name != "Translation to Nominal Grid", tforms)
+            )
         else:
             tforms_filtered = tforms
-        
-        hoaffines = [t.transform for t in tforms_filtered]
-        
-        composed_hoaffs = tuple(accumulate(hoaffines, partial(compose_hoaffines, dimensions=dimension_names)))
-        # neuroglancer expects ndim x ndim + 1 matrix
-        matrix = hoaffine_to_array(
-            composed_hoaffs[transform_index], 
-            dimensions=dimension_names
-            )[:-1]
-        
-        # convert translations into the output coordinate space
-        base_scale_dict = {dim: float(x) for x, dim in zip(view_setup.voxel_size.size.split(' '), ('x','y','z')) }
-        scales = [base_scale_dict[dim] for dim in dimension_names]
-        image_name = ''
 
-        image_source = f'{image_format}://{image_path}'
-        h,s,l = random.random(), 0.5 + random.random()/2.0, 0.4 + random.random()/5.0
-        color = [int(256*i) for i in colorsys.hls_to_rgb(h,l,s)]
+        hoaffines = [t.transform for t in tforms_filtered]
+
+        composed_hoaffs = tuple(
+            accumulate(
+                hoaffines, partial(compose_hoaffines, dimensions=dimension_names)
+            )
+        )
+        final_transform = composed_hoaffs[transform_index]
+        # neuroglancer expects ndim x ndim + 1 matrix
+        matrix = hoaffine_to_array(final_transform, dimensions=dimension_names)[:-1]
+
+        # convert translations into the output coordinate space
+        base_scale_dict = {
+            dim: float(x)
+            for x, dim in zip(view_setup.voxel_size.size.split(" "), ("x", "y", "z"))
+        }
+        input_scales = [base_scale_dict[dim] for dim in dimension_names]
+        image_name = vs_id
+
+        image_source = f"{image_format}://{image_path}"
+        h, s, l = (
+            random.random(),
+            0.5 + random.random() / 2.0,
+            0.4 + random.random() / 5.0,
+        )
+        color = [int(256 * i) for i in colorsys.hls_to_rgb(h, l, s)]
         color_str = "#{0:02x}{1:02x}{2:02x}".format(*color)
         shader = (
             "#uicontrol invlerp normalized()\n"
@@ -185,36 +198,78 @@ def bdv_to_neuroglancer(
             "void main(){{emitRGB(color * normalized());}}"
         )
         image_shader_controls = {
-        "normalized": {
-            "range": [display_settings['start'], display_settings['stop']],
-            "window": [display_settings['min'], display_settings['max']],
+            "normalized": {
+                "range": [display_settings["start"], display_settings["stop"]],
+                "window": [display_settings["min"], display_settings["max"]],
+            }
         }
-    }
         input_space = neuroglancer.CoordinateSpace(
-            names=dimension_names,
-            units=units,
-            scales=scales
+            names=dimension_names, units=units, scales=input_scales
         )
-        
+
         image_transform = neuroglancer.CoordinateSpaceTransform(
             output_dimensions=input_space,
             input_dimensions=input_space,
             source_rank=len(dimension_names),
-            matrix=matrix)
-        # TODO: choose a source class based on whether a host was provided, so that 
+            matrix=matrix,
+        )
+        # TODO: choose a source class based on whether a host was provided, so that
         # local files can potentially be viewed.
         state.layers.append(
             name=image_name,
             layer=neuroglancer.ImageLayer(
                 source=neuroglancer.LayerDataSource(
-                    url=image_source, 
-                    transform=image_transform),
+                    url=image_source, transform=image_transform
+                ),
                 shader_controls=image_shader_controls,
                 shader=shader,
-                blend='additive'
-            ))
+                blend="additive",
+            ),
+        )
+
+        if interest_points == "points":
+            points_data = read_interest_points(
+                bs_model=bs_model,
+                image_id=vs_id,
+                store=xml_path.parent / "interestpoints.n5",
+            )
+
+            # TODO: apply translation to nominal grid for points
+
+            locs_transformed = apply_hoaffine(
+                tx=final_transform,
+                data=points_data["loc_xyz"].to_numpy(),
+                dimensions=dimension_names,
+            )
+
+            points_data = points_data.with_columns(loc_xyz_transformed=locs_transformed)
+            points_map[vs_id] = points_data
+
+            state.layers.append(
+                name="interest_points",
+                layer=neuroglancer.LocalAnnotationLayer(
+                    dimensions=output_space,
+                    annotation_properties=[
+                        neuroglancer.AnnotationPropertySpec(
+                            id="color",
+                            type="rgb",
+                            default="green",
+                        ),
+                        neuroglancer.AnnotationPropertySpec(
+                            id="size",
+                            type="float32",
+                            default=10,
+                        ),
+                    ],
+                    annotations=[
+                        neuroglancer.PointAnnotation(id=idx, point=point)
+                        for idx, point in enumerate(locs_transformed[:, ::-1])
+                    ],
+                ),
+            )
 
     return state
+
 
 # TODO: use this instead of the raw tuple
 @dataclass(frozen=True)
@@ -264,25 +319,8 @@ def parse_idmap(data: dict[str, int]) -> dict[tuple[str, str, str], str]:
     return dict(zip(parts_normalized, data.values()))
 
 
-@deprecated(
-    "This functionality is deprecated. Use image metadata or the bigstitcher xml file instead."
-)
-def tile_coord_to_image_name(coord: TileCoordinate) -> str:
-    """
-    {'x': 0, 'y': 0, 'ch': 561'} -> "tile_x_0000_y_0002_z_0000_ch_488.zarr/"
-    """
-    cx = coord["x"]
-    cy = coord["y"]
-    cz = coord["z"]
-    cch = coord["ch"]
-    return f"tile_x_{cx:04}_y_{cy:04}_z_{cz:04}_ch_{cch}"
-
-
 def parse_matches(
-    *, 
-    name: str, 
-    data: np.ndarray, 
-    id_map: dict[tuple[int, int, str], int]
+    *, name: str, data: np.ndarray, id_map: dict[tuple[int, int, str], int]
 ):
     """
     Convert a name, match data, and an id mapping to a polars dataframe that contains
@@ -305,10 +343,10 @@ def parse_matches(
 
     match_result = pl.DataFrame(
         schema={
-            "point_id_self": pl.Int64, 
-            "point_id_other": pl.Int64, 
-            "image_id_self": pl.String, 
-            "image_id_other": pl.String
+            "point_id_self": pl.Int64,
+            "point_id_other": pl.Int64,
+            "image_id_self": pl.String,
+            "image_id_other": pl.String,
         },
         data={
             "point_id_self": data_copy[:, 0],
@@ -316,25 +354,27 @@ def parse_matches(
             "image_id_self": [id_self] * data_copy.shape[0],
             "image_id_other": data_copy[:, 2],
         },
-        strict=False
+        strict=False,
     )
     return match_result
 
 
 def read_interest_points(
     *,
-    identifier: SetupTimepoint, 
-    store: str | URL | N5FSStore, 
-    path: str, anon: bool = True
-) -> pl.DataFrame:
+    bs_model: SpimData2,
+    image_id: str,
+    store: str | URL | N5FSStore,
+):
     """
     Load interest points and optionally correspondences from a bigstitcher-formatted n5 group as
     polars dataframes for a single tile.
     """
     log = structlog.get_logger()
+    ips_by_setup = {v.setup: v for v in bs_model.view_interest_points.elements}
+    path = ips_by_setup[image_id].path
 
     if isinstance(store, (str, URL)):
-        store_parsed = zarr.N5FSStore(str(store), mode="r", anon=anon)
+        store_parsed = zarr.N5FSStore(str(store), mode="r", anon=True)
     else:
         store_parsed = store
 
@@ -352,8 +392,7 @@ def read_interest_points(
         )
 
     correspondences_group = zarr.open_group(
-        store=store_parsed, 
-        path=f"{path}/correspondences", mode="r"
+        store=store_parsed, path=f"{path}/correspondences", mode="r"
     )
 
     # points are saved as [num_points, [x, y, z]]
@@ -365,23 +404,24 @@ def read_interest_points(
     points_result = pl.DataFrame(
         schema={
             "image_id_self": pl.String,
-            "point_id_self": pl.Int64, 
-            "loc_xyz": pl.Array(pl.Float64, 3), 
+            "point_id_self": pl.Int64,
+            "loc_xyz": pl.Array(pl.Float64, 3),
             "intensity": pl.Float32,
-            'point_id_other': pl.Int64,
-            'image_id_other': pl.String
-            },
+            "point_id_other": pl.Int64,
+            "image_id_other": pl.String,
+        },
         data={
-            "image_id_self": [identifier.setup] * len(ids_list),
-            "point_id_self": ids_list, 
-            "loc_xyz": loc, 
+            "image_id_self": [image_id] * len(ids_list),
+            "point_id_self": ids_list,
+            "loc_xyz": loc,
             "intensity": intensities,
-            'image_id_other': [None] * len(ids_list),
-            'point_id_other': [None] * len(ids_list),
-            })
-    
+            "image_id_other": [None] * len(ids_list),
+            "point_id_other": [None] * len(ids_list),
+        },
+    )
+
     matches_exist = "data" in correspondences_group
-    
+
     if not matches_exist:
         log.info(f"No matches found for {get_url(store_parsed)}.")
         return points_result
@@ -390,18 +430,18 @@ def read_interest_points(
         matches = np.array(correspondences_group["data"])
         match_result = parse_matches(name=path, data=matches, id_map=id_map)
         return points_result.drop("image_id_other", "point_id_other").join(
-            match_result.drop('image_id_self'), 
-            on="point_id_self", 
+            match_result.drop("image_id_self"),
+            on="point_id_self",
             how="left",
-            coalesce=True
+            coalesce=True,
         )
 
-def get_interest_points(
+
+def read_all_interest_points(
     *,
     bs_model: SpimData2,
-    n5_interest_points_url: URL,
+    store: URL | N5FSStore | str,
     pool: ThreadPoolExecutor,
-    anon: bool = True,
 ) -> dict[ViewSetup, pl.DataFrame]:
     """
     Load all the match data from the n5 datasets containing it.
@@ -412,29 +452,26 @@ def get_interest_points(
     """
     vips = bs_model.view_interest_points
     result_dict: dict[ViewSetup, pl.DataFrame] = {}
-    identifiers = tuple(SetupTimepoint(
-            setup=int(ip.setup), 
-            timepoint=int(ip.timepoint)) for ip in vips.elements)
     futures = []
-    for identifier, ip in zip(identifiers, vips.elements):
-        futures.append(pool.submit(
-            read_interest_points,
-            identifier=identifier,
-            store=n5_interest_points_url,
-            path=ip.path,
-            anon=anon,
-        ))
+    for ip in vips.elements:
+        futures.append(
+            pool.submit(
+                read_interest_points,
+                bs_model=bs_model,
+                image_id=ip.view_setup,
+                store=store,
+            )
+        )
     wait(futures)
-    for identifier, result in zip(identifiers, futures):
-        result_dict[identifier] = result.result()
-        
+    for idx, ip in enumerate(vips.elements):
+        result_dict[ip.view_setup] = futures[idx].result()
+
     return result_dict
 
 
 def get_transforms(
-        bs_model: SpimData2, 
-        *,
-        composed: bool = False) -> dict[str, tuple[pydantic_bigstitcher.transform.HoAffine, ...]]:
+    bs_model: SpimData2, *, composed: bool = False
+) -> dict[str, tuple[pydantic_bigstitcher.transform.HoAffine, ...]]:
     """
     Get affine transform of view setups referenced in bigstitcher xml data.
     """
@@ -454,8 +491,12 @@ def get_transforms(
             result[key] = tuple(hoaffines)
 
         if composed:
-            result[key] = tuple(accumulate(hoaffines, partial(compose_hoaffines, dimensions=("x", "y", "z"))))
-    
+            result[key] = tuple(
+                accumulate(
+                    hoaffines, partial(compose_hoaffines, dimensions=("x", "y", "z"))
+                )
+            )
+
     return result
 
 
@@ -486,11 +527,7 @@ class PointsGroup(GroupSpec[InterestPointsGroupMeta, InterestPointsMembers]):
 
 
 def save_annotations(
-    *,
-    bs_model: SpimData2,
-    image_id: str,
-    alignment_url: URL | str,
-    dest_url: URL | str
+    *, bs_model: SpimData2, image_id: str, alignment_url: URL | str, dest_url: URL | str
 ):
     """
     Load points and correspondences (matches) between a single tile an all other tiles, and save as neuroglancer
@@ -504,12 +541,21 @@ def save_annotations(
     If matches are not found, then just the interest points will be saved.
     """
     unit = bs_model.sequence_description.view_setups.elements[0].voxel_size.unit
-    base_scales = tuple(map(float, bs_model.sequence_description.view_setups.elements[0].voxel_size.size.split(" ")))
+    base_scales = tuple(
+        map(
+            float,
+            bs_model.sequence_description.view_setups.elements[0].voxel_size.size.split(
+                " "
+            ),
+        )
+    )
     dimension_names = ["x", "y", "z"]
     base_units = [unit] * len(dimension_names)
     ips_by_setup = {v.setup: v for v in bs_model.view_interest_points.elements}
-    view_setups_by_id = {v.ident: v for v in bs_model.sequence_description.view_setups.elements}
-    
+    view_setups_by_id = {
+        v.ident: v for v in bs_model.sequence_description.view_setups.elements
+    }
+
     image_name = view_setups_by_id[image_id].name
 
     log = structlog.get_logger(image_name=image_name)
@@ -551,34 +597,31 @@ def save_annotations(
         to_access += (key[1],)
 
     for img_id in to_access:
-        _path = ips_by_setup[img_id].path
         points_data = read_interest_points(
-            identifier=SetupTimepoint(setup=img_id, timepoint=0),
-            store=ip_store, 
-            path=_path, 
-            anon=True
+            bs_model=bs_model,
+            image_id=img_id,
+            store=ip_store,
         )
-        
+
         transform = get_transforms(bs_model=bs_model, composed=True)[img_id]
         # not clear which transformation to use here
         locs_transformed = apply_hoaffine(
-            tx=transform[-1], 
-            data=points_data['loc_xyz'].to_numpy(), 
-            dimensions=dimension_names)
-        
+            tx=transform[-1],
+            data=points_data["loc_xyz"].to_numpy(),
+            dimensions=dimension_names,
+        )
+
         points_data = points_data.with_columns(loc_xyz_transformed=locs_transformed)
         points_map[img_id] = points_data
 
     annotation_space = neuroglancer.CoordinateSpace(
-        names=dimension_names, 
-        scales=base_scales, 
-        units=base_units
+        names=dimension_names, scales=base_scales, units=base_units
     )
 
     try:
         point_color = tile_coordinate_to_rgba(image_name_to_tile_coord(image_name))
     except IndexError:
-        point_color = (125,125,125,125)
+        point_color = (125, 125, 125, 125)
 
     line_starts: list[tuple[float, float, float, float]] = []
     line_stops: list[tuple[float, float, float, float]] = []
@@ -586,7 +629,7 @@ def save_annotations(
 
     point_data = points_map[image_id]
     id_data = point_map_self.get_column("point_id_self").to_list()
-    
+
     write_point_annotations(
         points_url,
         points=point_data["loc_xyz_transformed"].to_numpy(),
@@ -594,21 +637,22 @@ def save_annotations(
         coordinate_space=annotation_space,
         point_color=point_color,
     )
-    
-    matches = point_data.filter(pl.col('point_id_other').is_not_null())
+
+    matches = point_data.filter(pl.col("point_id_other").is_not_null())
 
     if len(matches) > 0:
         log.info(f"Saving matches to {lines_url}.")
         for image_id_other_tup, match_group in matches.group_by("image_id_other"):
             image_id_other = image_id_other_tup[0]
             joined = points_map[image_id_other].join(
-                match_group, 
-                left_on="point_id_self", 
-                right_on="point_id_other", 
-                how="inner")
+                match_group,
+                left_on="point_id_self",
+                right_on="point_id_other",
+                how="inner",
+            )
 
-            line_starts.extend(joined['loc_xyz_transformed'].to_numpy().tolist())
-            line_stops.extend(joined['loc_xyz_transformed_right'].to_numpy().tolist())
+            line_starts.extend(joined["loc_xyz_transformed"].to_numpy().tolist())
+            line_stops.extend(joined["loc_xyz_transformed_right"].to_numpy().tolist())
 
         lines_loc = tuple(zip(*(line_starts, line_stops)))
         write_line_annotations(
@@ -618,6 +662,7 @@ def save_annotations(
             point_color=point_color,
         )
     log.info(f"Completed saving points / matches after {time.time() - start:0.4f}s.")
+
 
 def save_interest_points(
     *,
@@ -637,11 +682,9 @@ def save_interest_points(
     }
 
     ips_by_setup = {v.setup: v for v in bs_model.view_interest_points.elements}
-    
+
     if image_names is None:
-        image_names_parsed = [
-            view_setup_by_ident[ip_id].name for ip_id in ips_by_setup
-        ]
+        image_names_parsed = [view_setup_by_ident[ip_id].name for ip_id in ips_by_setup]
     else:
         image_names_parsed = image_names
 
@@ -662,15 +705,13 @@ def save_interest_points(
 def fetch_summarize_matches(
     *, bigstitcher_xml: URL, pool: ThreadPoolExecutor, anon: bool = True
 ) -> pl.DataFrame:
-
     log = structlog.get_logger()
     bs_model = read_bigstitcher_xml(bigstitcher_xml)
     interest_points_url = bigstitcher_xml.parent.joinpath("interestpoints.n5")
-    all_matches = get_interest_points(
+    all_matches = read_all_interest_points(
         bs_model=bs_model,
-        n5_interest_points_url=interest_points_url,
+        store=interest_points_url,
         pool=pool,
-        anon=anon,
     )
     if len(all_matches) == 0:
         raise ValueError("No matches found!")
@@ -717,9 +758,9 @@ def summarize_matches(
         tcoord = tile_coords[k]["x"], tile_coords[k]["y"], tile_coords[k]["z"]
         individual_augmented[k] = v.with_columns(
             image_name=pl.lit(image_names[k]),
-            x_coord_self=pl.lit(tcoord[0]['trans']),
-            y_coord_self=pl.lit(tcoord[1]['trans']),
-            z_coord_self=pl.lit(tcoord[2]['trans']),
+            x_coord_self=pl.lit(tcoord[0]["trans"]),
+            y_coord_self=pl.lit(tcoord[1]["trans"]),
+            z_coord_self=pl.lit(tcoord[2]["trans"]),
         )
     result = (
         pl.concat(individual_augmented.values())
@@ -737,8 +778,3 @@ def summarize_matches(
         .sort("id_self")
     )
     return result
-
-
-
-
-            
