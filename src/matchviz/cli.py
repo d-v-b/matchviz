@@ -238,11 +238,16 @@ def view_bdv_cli(
     else:
         neuroglancer.set_server_bind_address("localhost")
 
+    if channels != 'all':
+        channels_parsed =  tuple(int(x) for x in channels.split(","))
+    else:
+        channels_parsed = 'all'
+
     viewer = view_bdv(
         bs_model=parse_url(bigstitcher_xml),
-        host=host,
+        host=parse_url(host),
         view_setups=view_setups,
-        channels=channels,
+        channels=channels_parsed,
         transform_index=transform_index,
         contrast_limits=contrast_limits_parsed,
         interest_points=interest_points,
