@@ -676,7 +676,7 @@ def save_interest_points(
     ips_by_setup = {v.setup: v for v in bs_model.view_interest_points.elements}
 
     if image_names is None:
-        image_names_parsed = [view_setup_by_ident[ip_id].name for ip_id in ips_by_setup]
+        image_names_parsed = [view_setup_by_ident[ip_id].ident for ip_id in ips_by_setup]
     else:
         image_names_parsed = image_names
 
