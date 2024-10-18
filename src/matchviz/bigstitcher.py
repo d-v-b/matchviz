@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
 import re
 import time
-from typing import Annotated, Any, Literal, cast, TYPE_CHECKING, Iterable
+from typing import Annotated, Any, Literal, TypeAlias, cast, TYPE_CHECKING, Iterable
 from typing_extensions import TypedDict, deprecated
 from pydantic import BaseModel, BeforeValidator, Field
 from pydantic_zarr.v2 import ArraySpec, GroupSpec
@@ -19,6 +19,7 @@ from matchviz.core import (
     parse_url,
     tile_coordinate_to_rgba,
 )
+from matchviz.schemas import IP_SCHEMA, MATCH_SCHEMA
 from matchviz.transform import apply_hoaffine, compose_hoaffines, hoaffine_to_array
 from matchviz.types import TileCoordinate
 from pydantic_bigstitcher.transform import HoAffine
@@ -36,6 +37,8 @@ import pydantic_bigstitcher
 from yarl import URL
 import neuroglancer
 
+from pydantic_bigstitcher.transform import Axes as T_XYZ
+xyz = ('x','y','z')
 random.seed(0)
 
 
@@ -342,12 +345,7 @@ def parse_matches(
     data_copy[:, -1] = np.vectorize(remap.get)(data[:, -1])
 
     match_result = pl.DataFrame(
-        schema={
-            "point_id_self": pl.Int64,
-            "point_id_other": pl.Int64,
-            "image_id_self": pl.String,
-            "image_id_other": pl.String,
-        },
+        schema=MATCH_SCHEMA,
         data={
             "point_id_self": data_copy[:, 0],
             "point_id_other": data_copy[:, 1],
@@ -402,19 +400,12 @@ def read_interest_points(
     ids_list = ids.squeeze().tolist()
 
     points_result = pl.DataFrame(
-        schema={
-            "image_id_self": pl.String,
-            "point_id_self": pl.Int64,
-            "loc_xyz": pl.Array(pl.Float64, 3),
-            "intensity": pl.Float32,
-            "point_id_other": pl.Int64,
-            "image_id_other": pl.String,
-        },
+        schema=IP_SCHEMA,
         data={
             "image_id_self": [image_id] * len(ids_list),
             "point_id_self": ids_list,
-            "loc_xyz": loc,
-            "intensity": intensities,
+            "point_loc_xyz": loc,
+            "point_intensity": intensities,
             "image_id_other": [None] * len(ids_list),
             "point_id_other": [None] * len(ids_list),
         },
@@ -458,46 +449,47 @@ def read_all_interest_points(
             pool.submit(
                 read_interest_points,
                 bs_model=bs_model,
-                image_id=ip.view_setup,
+                image_id=ip.setup,
                 store=store,
             )
         )
     wait(futures)
     for idx, ip in enumerate(vips.elements):
-        result_dict[ip.view_setup] = futures[idx].result()
+        result_dict[ip.setup] = futures[idx].result()
 
     return result_dict
 
 
 def get_transforms(
-    bs_model: SpimData2, *, composed: bool = False
-) -> dict[str, tuple[pydantic_bigstitcher.transform.HoAffine, ...]]:
+    bs_model: SpimData2,  
+) -> dict[str, tuple[pydantic_bigstitcher.transform.Transform[T_XYZ], ...]]:
     """
-    Get affine transform of view setups referenced in bigstitcher xml data.
+    Get transform of view setups referenced in bigstitcher xml data. Note that in bigstitcher metadata,
+    the transforms are ordered from last-applied to first-applied, but this function returns them in the reverse order,
+    i.e. the first transform is the first one that will be applied in the transform sequence.  
     """
-    # get all transformations for all view_setups
-    result: dict[int, tuple[HoAffine[Literal["x", "y", "z"]], ...]] = {}
+    result_tforms: dict[int, tuple[pydantic_bigstitcher.transform.Transform[T_XYZ], ...]] = {}
     for vs, vr in zip(
         bs_model.sequence_description.view_setups.elements,
         bs_model.view_registrations.elements,
     ):
         key = vs.ident
-        # note that transforms are returned in reverse order relative to the bigstitcher xml document
         tforms = tuple(t.to_transform() for t in reversed(vr.view_transforms))
-        # for zarr data, remove the translation to nominal grid transform
-        hoaffines = tuple(t.transform for t in tforms)
+        result_tforms[key] = tforms
 
-        if not composed:
-            result[key] = tuple(hoaffines)
+    return result_tforms
 
-        if composed:
-            result[key] = tuple(
-                accumulate(
-                    hoaffines, partial(compose_hoaffines, dimensions=("x", "y", "z"))
-                )
-            )
-
-    return result
+def compose_transforms(transforms: Iterable[pydantic_bigstitcher.transform.Transform[T_XYZ]]):
+    """
+    Compose transforms from bigstitcher.
+    """
+    hoaffines = tuple(t.transform for t in transforms)
+    if not all(isinstance(t, HoAffine) for t in hoaffines):
+        raise ValueError("Expected all transforms to be of type HoAffine") 
+    return tuple(
+        accumulate(
+                    hoaffines, partial(compose_hoaffines, dimensions=xyz)
+                ))[-1]
 
 
 class InterestPointsGroupMeta(BaseModel):
@@ -727,54 +719,54 @@ def fetch_summarize_matches(
     return summarized
 
 
-def summarize_match(match: pl.DataFrame) -> pl.DataFrame:
-    """
-    Summarize a dataframe of matches read from the bigstitcher n5 output by grouping by the id
-    """
-    return (
-        match.group_by("id_self", "id_other")
-        .agg(pl.col("point_self").count())
-        .rename({"point_self": "num_matches"})
-    )
-
-
 def summarize_matches(
-    bs_model: SpimData2, matches_dict: dict[str, pl.DataFrame]
+    bs_model: SpimData2, 
+    matches_dict: dict[str, pl.DataFrame],
 ) -> pl.DataFrame:
-    tile_coords = get_transforms(bs_model)
 
-    image_names = tuple(
-        v.name for v in bs_model.sequence_description.view_setups.elements
-    )
+    transforms = get_transforms(bs_model=bs_model)
+    view_setups = {v.ident: v for v in bs_model.sequence_description.view_setups.elements}
 
-    # polars dataframes keyed by bigstitcher image names
-    individual_summaries = {}
-    for v in matches_dict.values():
-        individual_summaries[v["id_self"][0]] = summarize_match(v)
+    matches_tx = {}
+    origins = {}
+    for k,v in transforms.items():
+        # the logic here is to assume that every transformation up the the final one is the baseline
+        # and the final transform is the one estimated from the detected interest points. This assumption
+        # may not hold in general.
+        df = matches_dict[k]
+        point_loc_xyz = df['point_loc_xyz']
+        pre_aff, post_aff = compose_transforms(v[:-1]), compose_transforms(v)
+        
+        # get the origin of the image after applying the transform
+        # center of the image is probably better 
+        origins[k] = apply_hoaffine(tx=pre_aff, data=np.array([[0,0,0]]), dimensions=xyz)[0]
 
-    # include the file name and the normalized tile coordinate to each column
-    individual_augmented = {}
-    for k, v in individual_summaries.items():
-        tcoord = tile_coords[k]["x"], tile_coords[k]["y"], tile_coords[k]["z"]
-        individual_augmented[k] = v.with_columns(
-            image_name=pl.lit(image_names[k]),
-            x_coord_self=pl.lit(tcoord[0]["trans"]),
-            y_coord_self=pl.lit(tcoord[1]["trans"]),
-            z_coord_self=pl.lit(tcoord[2]["trans"]),
-        )
-    result = (
-        pl.concat(individual_augmented.values())
-        .select(
-            [
-                pl.col("image_name"),
-                pl.col("id_self"),
-                pl.col("id_other"),
-                pl.col("num_matches"),
-                pl.col("x_coord_self"),
-                pl.col("y_coord_self"),
-                pl.col("z_coord_self"),
-            ]
-        )
-        .sort("id_self")
-    )
-    return result
+        point_loc_xyz_baseline = apply_hoaffine(tx=pre_aff, data=point_loc_xyz.to_numpy(), dimensions=(xyz))
+        point_loc_xyz_fitted = apply_hoaffine(tx=post_aff, data=point_loc_xyz.to_numpy(), dimensions=(xyz))
+        error = np.linalg.norm(point_loc_xyz_fitted - point_loc_xyz_baseline, axis=1)
+
+        matches_tx[k] = df.with_columns(
+            point_loc_xyz_baseline=point_loc_xyz_baseline, 
+            point_loc_xyz_fitted=point_loc_xyz_fitted,
+            error=error)
+        
+    # concatenate all matches into a single dataframe
+    # the only possible nulls should be points that were not matched, so we drop all of those to just
+    # get the set of matched points
+    all_matches = pl.concat(matches_tx.values()).drop_nulls()
+
+    out = all_matches.group_by("image_id_self", "image_id_other").agg(
+        [
+            pl.col("point_id_self").count().name.map(lambda v: "num_matches"),
+            pl.col("error").min().name.suffix("_min"),
+            pl.col("error").max().name.suffix("_max"),
+            pl.col("error").mean().name.suffix("_mean"),
+            ]).sort("image_id_self", "image_id_other")
+    
+    out = out.with_columns(
+                image_name_self=pl.Series([view_setups[k].name for k in out['image_id_self']]),
+                image_name_other=pl.Series([view_setups[k].name for k in out['image_id_other']]),
+                image_origin_self=pl.Series([origins[k] for k in out['image_id_self']], dtype=pl.Array(pl.Float64, 3),)
+            )
+
+    return out
