@@ -688,7 +688,7 @@ def save_interest_points(
             view_setup_by_ident[ip_id].ident for ip_id in ips_by_setup
         ]
     else:
-        image_names_parsed = image_names
+        image_names_parsed = list(image_names)
 
     if bs_model.view_interest_points is None:
         raise ValueError(
