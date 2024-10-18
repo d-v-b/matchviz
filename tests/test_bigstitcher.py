@@ -28,9 +28,8 @@ def test_read_points(bigstitcher_xml: str) -> None:
 
     _ = read_all_interest_points(
         bs_model=bs_model,
-        n5_interest_points_url=bs_url.parent / "interestpoints.n5",
+        store=bs_url.parent / "interestpoints.n5",
         pool=pool,
-        anon=True,
     )
 
 
