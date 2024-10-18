@@ -27,7 +27,7 @@ from matchviz.neuroglancer_styles import (
 import structlog
 from s3fs import S3FileSystem
 import neuroglancer
-from matchviz.plot import plot_matches
+from matchviz.plot import plot_matches_gird
 from pydantic_bigstitcher import SpimData2
 
 
@@ -67,7 +67,7 @@ def plot_matches_cli(
         bigstitcher_xml=bigstitcher_xml_normalized, pool=pool, anon=anon
     )
 
-    fig = plot_matches(
+    fig = plot_matches_gird(
         data=data,
         dataset_name=bigstitcher_xml_normalized.path,
         invert_x=invert_x_axis,
@@ -199,14 +199,14 @@ def tabulate_matches_cli(bigstitcher_xml: str, output: Literal["csv"] | None):
     summarized = fetch_summarize_matches(
         bigstitcher_xml=bigstitcher_xml_url, pool=pool, anon=anon
     )
-    
+
     if output == "csv":
-        origin_xyz = summarized['image_origin_self'].to_numpy()
-        csv_friendly = summarized.drop('image_origin_self').with_columns(
-            image_origin_self_x=origin_xyz[:,0],
-            image_origin_self_y=origin_xyz[:,1],
-            image_origin_self_z=origin_xyz[:,2],
-            )
+        origin_xyz = summarized["image_origin_self"].to_numpy()
+        csv_friendly = summarized.drop("image_origin_self").with_columns(
+            image_origin_self_x=origin_xyz[:, 0],
+            image_origin_self_y=origin_xyz[:, 1],
+            image_origin_self_z=origin_xyz[:, 2],
+        )
         click.echo(csv_friendly.write_csv())
     else:
         raise ValueError(f'Format {output} is not recognized. Allowed values: ("csv",)')
@@ -245,14 +245,19 @@ def view_bdv_cli(
     else:
         neuroglancer.set_server_bind_address("localhost")
 
-    if channels != 'all':
-        channels_parsed =  tuple(int(x) for x in channels.split(","))
+    if channels != "all":
+        channels_parsed = tuple(int(x) for x in channels.split(","))
     else:
-        channels_parsed = 'all'
+        channels_parsed = "all"
+
+    if host is None:
+        host_parsed = None
+    else:
+        host_parsed = parse_url(host)
 
     viewer = view_bdv(
         bs_model=parse_url(bigstitcher_xml),
-        host=parse_url(host),
+        host=host_parsed,
         view_setups=view_setups,
         channels=channels_parsed,
         transform_index=transform_index,
@@ -271,7 +276,7 @@ def view_bdv(
     view_setups: str | None = None,
     channels: str | None = None,
     contrast_limits: tuple[int, int] | None,
-    interest_points: str | None = None,
+    interest_points: Literal["points", "matches"] | None = None,
     transform_index: int,
 ):
     display_settings: dict[str, int | None]

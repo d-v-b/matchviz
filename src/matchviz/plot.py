@@ -3,10 +3,8 @@ import polars as pl
 import numpy as np
 
 
-def plot_matches(
-    *, 
-    data: pl.DataFrame, 
-    dataset_name: str, invert_x, invert_y
+def plot_matches_gird(
+    *, data: pl.DataFrame, dataset_name: str, invert_x, invert_y
 ) -> plt.Figure:
     fig_w = 8
     fig_h = 8
@@ -19,7 +17,7 @@ def plot_matches(
         axs.invert_xaxis()
 
     axs.spines[["right", "top"]].set_visible(False)
-    axs.grid("on", alpha=0.5)
+    axs.grid(True, alpha=0.5)
     completed_pairs = set()
     completed_points = set()
     axs.set_xlabel("Image x coordinate (nm)")
@@ -37,8 +35,10 @@ def plot_matches(
             completed_points.add(name_self)
 
         if (id_self, id_other) not in completed_pairs:
-            rows_other = data.filter(pl.col("image_id_self") == row_model["image_id_other"])
-            coords_other = rows_other.select('image_origin_self').to_numpy()[0][0][:2]
+            rows_other = data.filter(
+                pl.col("image_id_self") == row_model["image_id_other"]
+            )
+            coords_other = rows_other.select("image_origin_self").to_numpy()[0][0][:2]
 
             # ensure that we don't display symmetric pairs
             completed_pairs.add((id_self, id_other))

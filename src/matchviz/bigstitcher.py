@@ -20,7 +20,12 @@ from matchviz.core import (
     tile_coordinate_to_rgba,
 )
 from matchviz.schemas import IP_SCHEMA, MATCH_SCHEMA
-from matchviz.transform import apply_hoaffine, compose_hoaffines, hoaffine_to_array
+from matchviz.transform import (
+    apply_hoaffine,
+    array_to_hoaffine,
+    compose_hoaffines,
+    hoaffine_to_array,
+)
 from matchviz.types import TileCoordinate
 from pydantic_bigstitcher.transform import HoAffine
 
@@ -71,15 +76,14 @@ def bdv_to_neuroglancer(
     sample_vs = bs_model.sequence_description.view_setups.elements[0]
     unit = sample_vs.voxel_size.unit
     scales = base_scale_dict = {
-        dim: float(x)
-        for x, dim in zip(sample_vs.voxel_size.size.split(" "), ("x", "y", "z"))
+        dim: float(x) for x, dim in zip(sample_vs.voxel_size.size.split(" "), xyz)
     }
-    dimension_names = ["z", "y", "x"]
-    units = [unit] * len(dimension_names)
+    dimension_names_out = xyz[::-1]
+    units = [unit] * len(dimension_names_out)
     points_map = {}
     output_space = neuroglancer.CoordinateSpace(
-        names=dimension_names,
-        scales=[scales[k] for k in dimension_names],
+        names=dimension_names_out,
+        scales=[scales[k] for k in dimension_names_out],
         units=units,
     )
 
@@ -159,33 +163,37 @@ def bdv_to_neuroglancer(
         # bigstitcher stores the transformations in reverse order, i.e. the
         # last transform in the series is the first one in the list
 
-        tforms = tuple(t.to_transform() for t in reversed(view_reg.view_transforms))
+        tforms = get_transforms(bs_model)[view_setup.ident]
         # for zarr data, replace the translation to nominal grid transform because neuroglancer
         # infers the position from zarr metadata
+
+        extra_points_transform = array_to_hoaffine(np.eye(4), dimensions=xyz)
+
         if image_format == "zarr":
             tforms_filtered = tuple(
                 filter(lambda v: v.name != "Translation to Nominal Grid", tforms)
             )
+
+            extra_points_transform = [
+                t for t in tforms if t.name == "Translation to Nominal Grid"
+            ][0].transform
         else:
             tforms_filtered = tforms
 
-        hoaffines = [t.transform for t in tforms_filtered]
-
-        composed_hoaffs = tuple(
-            accumulate(
-                hoaffines, partial(compose_hoaffines, dimensions=dimension_names)
-            )
-        )
-        final_transform = composed_hoaffs[transform_index]
+        tforms_indexed = [
+            *tforms_filtered[:transform_index],
+            tforms_filtered[transform_index],
+        ]
+        final_transform = compose_transforms(tforms_indexed)
         # neuroglancer expects ndim x ndim + 1 matrix
-        matrix = hoaffine_to_array(final_transform, dimensions=dimension_names)[:-1]
+        matrix = hoaffine_to_array(final_transform, dimensions=dimension_names_out)[:-1]
 
         # convert translations into the output coordinate space
         base_scale_dict = {
             dim: float(x)
             for x, dim in zip(view_setup.voxel_size.size.split(" "), ("x", "y", "z"))
         }
-        input_scales = [base_scale_dict[dim] for dim in dimension_names]
+        input_scales = [base_scale_dict[dim] for dim in dimension_names_out]
         image_name = vs_id
 
         image_source = f"{image_format}://{image_path}"
@@ -208,13 +216,13 @@ def bdv_to_neuroglancer(
             }
         }
         input_space = neuroglancer.CoordinateSpace(
-            names=dimension_names, units=units, scales=input_scales
+            names=dimension_names_out, units=units, scales=input_scales
         )
 
         image_transform = neuroglancer.CoordinateSpaceTransform(
             output_dimensions=input_space,
             input_dimensions=input_space,
-            source_rank=len(dimension_names),
+            source_rank=len(dimension_names_out),
             matrix=matrix,
         )
         # TODO: choose a source class based on whether a host was provided, so that
@@ -240,18 +248,26 @@ def bdv_to_neuroglancer(
 
             # TODO: apply translation to nominal grid for points
 
-            locs_transformed = apply_hoaffine(
-                tx=final_transform,
-                data=points_data["loc_xyz"].to_numpy(),
-                dimensions=dimension_names,
+            points_affine = compose_hoaffines(
+                extra_points_transform, final_transform, dimensions=xyz
             )
 
-            points_data = points_data.with_columns(loc_xyz_transformed=locs_transformed)
+            points_transform = neuroglancer.CoordinateSpaceTransform(
+                output_dimensions=input_space,
+                input_dimensions=input_space,
+                source_rank=len(dimension_names_out),
+                matrix=hoaffine_to_array(points_affine, dimensions=dimension_names_out)[
+                    :-1
+                ],
+            )
+
+            # points_data = points_data.with_columns(loc_xyz_transformed=locs_transformed)
             points_map[vs_id] = points_data
 
             state.layers.append(
                 name="interest_points",
                 layer=neuroglancer.LocalAnnotationLayer(
+                    transform=points_transform,
                     dimensions=output_space,
                     annotation_properties=[
                         neuroglancer.AnnotationPropertySpec(
@@ -267,7 +283,9 @@ def bdv_to_neuroglancer(
                     ],
                     annotations=[
                         neuroglancer.PointAnnotation(id=idx, point=point)
-                        for idx, point in enumerate(locs_transformed[:, ::-1])
+                        for idx, point in enumerate(
+                            points_data["point_loc_xyz"].to_numpy()[:, ::-1]
+                        )
                     ],
                 ),
             )
