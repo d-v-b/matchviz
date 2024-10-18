@@ -199,8 +199,15 @@ def tabulate_matches_cli(bigstitcher_xml: str, output: Literal["csv"] | None):
     summarized = fetch_summarize_matches(
         bigstitcher_xml=bigstitcher_xml_url, pool=pool, anon=anon
     )
+    
     if output == "csv":
-        click.echo(summarized.write_csv())
+        origin_xyz = summarized['image_origin_self'].to_numpy()
+        csv_friendly = summarized.drop('image_origin_self').with_columns(
+            image_origin_self_x=origin_xyz[:,0],
+            image_origin_self_y=origin_xyz[:,1],
+            image_origin_self_z=origin_xyz[:,2],
+            )
+        click.echo(csv_friendly.write_csv())
     else:
         raise ValueError(f'Format {output} is not recognized. Allowed values: ("csv",)')
 
