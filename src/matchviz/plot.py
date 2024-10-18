@@ -4,7 +4,9 @@ import numpy as np
 
 
 def plot_matches(
-    *, data: pl.DataFrame, dataset_name: str, invert_x, invert_y
+    *, 
+    data: pl.DataFrame, 
+    dataset_name: str, invert_x, invert_y
 ) -> plt.Figure:
     fig_w = 8
     fig_h = 8
@@ -25,20 +27,18 @@ def plot_matches(
 
     for row in data.rows():
         row_model = dict(zip(data.schema, row))
-        id_self = row_model["id_self"]
-        id_other = row_model["id_other"]
-        name_self = row_model["image_name"]
-        coords_self = row_model["x_coord_self"], row_model["y_coord_self"]
+        id_self = row_model["image_id_self"]
+        id_other = row_model["image_id_other"]
+        name_self = row_model["image_name_self"]
+        coords_self = row_model["image_origin_self"][:2]
 
         if name_self not in completed_points:
             axs.scatter(*coords_self, label=name_self, marker=f"${id_self}$", s=200)
             completed_points.add(name_self)
 
         if (id_self, id_other) not in completed_pairs:
-            rows_other = data.filter(pl.col("id_self") == row_model["id_other"])
-            coords_other = rows_other.select(
-                pl.first("x_coord_self"), pl.first("y_coord_self")
-            ).to_numpy()[0]
+            rows_other = data.filter(pl.col("image_id_self") == row_model["image_id_other"])
+            coords_other = rows_other.select('image_origin_self').to_numpy()[0][0][:2]
 
             # ensure that we don't display symmetric pairs
             completed_pairs.add((id_self, id_other))
