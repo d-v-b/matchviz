@@ -27,7 +27,7 @@ from matchviz.neuroglancer_styles import (
 import structlog
 from s3fs import S3FileSystem
 import neuroglancer
-from matchviz.plot import plot_matches_gird
+from matchviz.plot import plot_matches_grid
 from pydantic_bigstitcher import SpimData2
 
 
@@ -67,7 +67,7 @@ def plot_matches_cli(
         bigstitcher_xml=bigstitcher_xml_normalized, pool=pool, anon=anon
     )
 
-    fig = plot_matches_gird(
+    fig = plot_matches_grid(
         data=data,
         dataset_name=bigstitcher_xml_normalized.path,
         invert_x=invert_x_axis,

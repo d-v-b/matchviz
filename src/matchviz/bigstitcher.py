@@ -758,13 +758,14 @@ def summarize_matches(
 
     matches_tx = {}
     origins = {}
-    for k, v in transforms.items():
+    for k, df in matches_dict.items():
+
         # the logic here is to assume that every transformation up the the final one is the baseline
         # and the final transform is the one estimated from the detected interest points. This assumption
         # may not hold in general.
-        df = matches_dict[k]
+        txs = transforms[k]
         point_loc_xyz = df["point_loc_xyz"]
-        pre_aff, post_aff = compose_transforms(v[:-1]), compose_transforms(v)
+        pre_aff, post_aff = compose_transforms(txs[:-1]), compose_transforms(txs)
 
         # get the origin of the image after applying the transform
         # center of the image is probably better

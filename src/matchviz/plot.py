@@ -3,11 +3,11 @@ import polars as pl
 import numpy as np
 
 
-def plot_matches_gird(
+def plot_matches_grid(
     *, data: pl.DataFrame, dataset_name: str, invert_x, invert_y
 ) -> plt.Figure:
-    fig_w = 8
-    fig_h = 8
+    fig_w = 12
+    fig_h = 12  
 
     fig, axs = plt.subplots(figsize=(fig_w, fig_h))
 
