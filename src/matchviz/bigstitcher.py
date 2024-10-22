@@ -735,15 +735,8 @@ def fetch_summarize_matches(
     )
     if len(all_matches) == 0:
         raise ValueError("No matches found!")
-    valid_matches = {}
-    for key, value in all_matches.items():
-        if isinstance(value, BaseException):
-            log.info(f"An exception occurred when accessing {key}")
-            log.exception(value)
-        else:
-            valid_matches[key] = value
 
-    summarized = summarize_matches(bs_model=bs_model, matches_dict=valid_matches)
+    summarized = summarize_matches(bs_model=bs_model, matches_dict=all_matches)
     return summarized
 
 
@@ -765,7 +758,12 @@ def summarize_matches(
         # may not hold in general.
         txs = transforms[k]
         point_loc_xyz = df["point_loc_xyz"]
-        pre_aff, post_aff = compose_transforms(txs[:-1]), compose_transforms(txs)
+        
+        if len(txs) > 1:
+            pre_aff, post_aff = compose_transforms(txs[:-1]), compose_transforms(txs)
+        else:
+            pre_aff = txs[0].transform
+            post_aff = None
 
         # get the origin of the image after applying the transform
         # center of the image is probably better
@@ -776,10 +774,14 @@ def summarize_matches(
         point_loc_xyz_baseline = apply_hoaffine(
             tx=pre_aff, data=point_loc_xyz.to_numpy(), dimensions=(xyz)
         )
-        point_loc_xyz_fitted = apply_hoaffine(
-            tx=post_aff, data=point_loc_xyz.to_numpy(), dimensions=(xyz)
-        )
-        error = np.linalg.norm(point_loc_xyz_fitted - point_loc_xyz_baseline, axis=1)
+        if post_aff is not None:
+            point_loc_xyz_fitted = apply_hoaffine(
+                tx=post_aff, data=point_loc_xyz.to_numpy(), dimensions=(xyz)
+            )
+            error = np.linalg.norm(point_loc_xyz_fitted - point_loc_xyz_baseline, axis=1)
+        else:
+            point_loc_xyz_fitted = [None] * len(point_loc_xyz)
+            error = [None] * len(point_loc_xyz)
 
         matches_tx[k] = df.with_columns(
             point_loc_xyz_baseline=point_loc_xyz_baseline,
@@ -790,7 +792,7 @@ def summarize_matches(
     # concatenate all matches into a single dataframe
     # the only possible nulls should be points that were not matched, so we drop all of those to just
     # get the set of matched points
-    all_matches = pl.concat(matches_tx.values()).drop_nulls()
+    all_matches = pl.concat(matches_tx.values()).filter(~pl.col('image_id_other').is_null())
 
     out = (
         all_matches.group_by("image_id_self", "image_id_other")
