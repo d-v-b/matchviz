@@ -795,7 +795,9 @@ def summarize_matches(
     # the only possible nulls should be points that were not matched, so we drop all of those to just
     # get the set of matched points
     # specify diagonal concat because frames with no matches might have a different column order
-    all_matches = pl.concat(matches_tx.values(),how='diagonal').filter(~pl.col('image_id_other').is_null())
+    all_matches = pl.concat(
+        matches_tx.values(),
+        how='diagonal').filter(~pl.col('image_id_other').is_null())
 
     out = (
         all_matches.group_by("image_id_self", "image_id_other")
