@@ -41,7 +41,7 @@ from pydantic_bigstitcher import SpimData2, ViewSetup
 import pydantic_bigstitcher
 from yarl import URL
 import neuroglancer
-
+from neuroglancer.static_file_server import StaticFileServer
 from pydantic_bigstitcher.transform import Axes as T_XYZ
 
 xyz = ("x", "y", "z")
@@ -61,7 +61,7 @@ def read_bigstitcher_xml(url: URL, anon: bool = True) -> SpimData2:
     return bs_model
 
 
-def bdv_to_neuroglancer(
+def spimdata_to_neuroglancer(
     xml_path: URL,
     *,
     anon: bool = True,
@@ -71,6 +71,7 @@ def bdv_to_neuroglancer(
     channels: Literal["all"] | Iterable[int] = "all",
     interest_points: Literal["points", "matches"] | None = None,
     display_settings: dict[str, Any] | None = None,
+    bind_address = '0.0.0.0'
 ) -> neuroglancer.ViewerState:
     bs_model = read_bigstitcher_xml(xml_path, anon=anon)
     sample_vs = bs_model.sequence_description.view_setups.elements[0]
@@ -91,46 +92,26 @@ def bdv_to_neuroglancer(
 
     if bs_model.base_path.path == ".":
         if host is None:
-            base_path = xml_path.parent
+            server = StaticFileServer(str(xml_path.parent.path), bind_address=bind_address, daemon=True)
+            base_url = URL(server.url)
         else:
-            base_path = host
+            server = None
+            base_url = URL(host)
 
     else:
         raise ValueError(f"Base path {bs_model.base_path.path} is not supported")
 
     image_loader = bs_model.sequence_description.image_loader
-
-    if image_loader.fmt == "bdv.multimg.zarr":
-        image_format = "zarr"
-        if image_loader.zarr.type == "absolute":
-            if hasattr(image_loader, "s3bucket"):
-                prefix = URL(f"s3://{image_loader.s3bucket}")
-            else:
-                if host is not None:
-                    prefix = host
-                else:
-                    prefix = URL("file:///")
-            container_root = prefix / image_loader.zarr.path
+    image_format : Literal["n5", "zarr"]
+    image_format = image_loader.fmt.split('.')[-1]
+    if getattr(image_loader, image_format).type == "absolute":
+        if hasattr(image_loader, "s3bucket"):
+            prefix = URL(f"s3://{image_loader.s3bucket}")
         else:
-            container_root = base_path / image_loader.zarr.path
-
-    elif image_loader.fmt == "bdv.n5":
-        image_format = "n5"
-        if image_loader.n5.type == "absolute":
-            if hasattr(image_loader, "s3bucket"):
-                prefix = f"s3://{image_loader.s3bucket}"
-            else:
-                if host is not None:
-                    prefix = host
-                else:
-                    prefix = URL("file:///")
-            container_root = URL(prefix) / image_loader.zarr.path
-        else:
-            container_root = base_path / image_loader.n5.path
+            prefix = base_url                
+        container_root = prefix / getattr(image_loader, image_format).path
     else:
-        raise ValueError(
-            f"Unknown image format: {bs_model.sequence_description.image_loader.fmt}"
-        )
+        container_root = base_url / getattr(image_loader, image_format).path
 
     for view_reg in bs_model.view_registrations.elements:
         vs_id = view_reg.setup
@@ -231,7 +212,8 @@ def bdv_to_neuroglancer(
             name=image_name,
             layer=neuroglancer.ImageLayer(
                 source=neuroglancer.LayerDataSource(
-                    url=image_source, transform=image_transform
+                    url=image_source, 
+                    transform=image_transform
                 ),
                 shader_controls=image_shader_controls,
                 shader=shader,
