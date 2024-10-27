@@ -15,6 +15,7 @@ from matchviz.annotation import write_line_annotations, write_point_annotations
 import random
 import colorsys
 from matchviz.core import (
+    get_store_url,
     get_url,
     parse_url,
     tile_coordinate_to_rgba,
@@ -420,18 +421,19 @@ def read_interest_points(
     matches_exist = "data" in correspondences_group
 
     if not matches_exist:
-        log.info(f"No matches found for {get_url(store_parsed)}.")
-        return points_result
+        log.info(f"No matches found for {get_store_url(store_parsed)}.")
+        result = points_result
     else:
         id_map = parse_idmap(correspondences_group.attrs["idMap"])
         matches = np.array(correspondences_group["data"])
         match_result = parse_matches(name=path, data=matches, id_map=id_map)
-        return points_result.drop("image_id_other", "point_id_other").join(
+        result = points_result.drop("image_id_other", "point_id_other").join(
             match_result.drop("image_id_self"),
             on="point_id_self",
             how="left",
             coalesce=True,
         )
+    return result
 
 
 def read_all_interest_points(
@@ -774,7 +776,10 @@ def summarize_matches(
     # concatenate all matches into a single dataframe
     # the only possible nulls should be points that were not matched, so we drop all of those to just
     # get the set of matched points
-    all_matches = pl.concat(matches_tx.values()).filter(~pl.col('image_id_other').is_null())
+    # specify diagonal concat because frames with no matches might have a different column order
+    all_matches = pl.concat(
+        matches_tx.values(),
+        how='diagonal').filter(~pl.col('image_id_other').is_null())
 
     out = (
         all_matches.group_by("image_id_self", "image_id_other")
