@@ -2,17 +2,21 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 import json
-from typing import Any, Literal, Sequence
+import socket
+from typing import Iterable, Literal, Sequence
 import click
 import fsspec
 import fsspec.implementations
 import fsspec.implementations.local
+import numpy as np
 from yarl import URL
 from matchviz import (
     create_neuroglancer_state,
 )
 from matchviz.bigstitcher import (
+    spimdata_to_neuroglancer,
     fetch_summarize_matches,
+    get_image_group,
     get_tilegroup_url,
     read_bigstitcher_xml,
     save_interest_points,
@@ -24,9 +28,10 @@ from matchviz.neuroglancer_styles import (
 )
 import structlog
 from s3fs import S3FileSystem
-
-from matchviz.plot import plot_matches
-
+import neuroglancer
+from matchviz.plot import plot_matches_grid
+from pydantic_bigstitcher import SpimData2
+import polars as pl
 
 @click.group("matchviz")
 def cli(): ...
@@ -52,7 +57,7 @@ log_level = click.option("--log-level", type=click.STRING, default="info")
 @click.option("--invert-x-axis", type=click.BOOL, is_flag=True, default=False)
 def plot_matches_cli(
     bigstitcher_xml: str,
-    dest: Any,
+    dest: str,
     invert_y_axis: bool,
     invert_x_axis: bool,
 ):
@@ -63,9 +68,32 @@ def plot_matches_cli(
     data = fetch_summarize_matches(
         bigstitcher_xml=bigstitcher_xml_normalized, pool=pool, anon=anon
     )
+    # get projection images of the relevant view_setups
+    summary_images: dict[str, np.ndarray] = {}
+    for view_setup_id in tuple(data['image_id_self'].unique()):
+        msg = get_image_group(
+            bigstitcher_xml=bigstitcher_xml, 
+            image_id = view_setup_id            
+        )
+        arrays_sorted = tuple(sorted(msg.items(), key = lambda kv: np.prod(kv[1].shape)))
+        _, smallest = arrays_sorted[0]
+        proj_dims = set(smallest.dims) & {'t', 'c', 'z'}
+        projected = smallest.max(proj_dims).compute()
+        if projected.ndim != 2:
+            raise ValueError('only 2D arrays are supported')
+        #new_origin = data.filter(pl.col('image_id_self') == view_setup_id)['image_origin_self'][0][:2]
+        #old_x = projected.coords['x'][0]
+        #old_y = projected.coords['y'][0]
+        #shifted_projected = projected.assign_coords(
+        #    {
+        #        'x': old_x + (new_origin[0] - old_x), 
+        #        'y': old_y + (new_origin[1] - old_y)}
+        #    )
+        summary_images[view_setup_id] = projected
 
-    fig = plot_matches(
-        data=data,
+    fig = plot_matches_grid(
+        images=summary_images,
+        point_df=data,
         dataset_name=bigstitcher_xml_normalized.path,
         invert_x=invert_x_axis,
         invert_y=invert_y_axis,
@@ -74,22 +102,36 @@ def plot_matches_cli(
 
 
 @cli.command("save-points")
-@click.option("--src", type=click.STRING, required=True)
+@click.option("--bigstitcher-xml", type=click.STRING, required=True)
 @click.option("--dest", type=click.STRING, required=True)
-def save_interest_points_cli(src: str, dest: str):
+@click.option("--image-names", type=click.STRING)
+def save_interest_points_cli(bigstitcher_xml: str, dest: str, image_names: str | None):
     """
     Save bigstitcher interest points from n5 to neuroglancer precomputed annotations.
     """
     # strip trailing '/' from src and dest
-    src_parsed = URL(src.rstrip("/"))
-    dest_parsed = URL(dest.rstrip("/"))
-    save_points(bigstitcher_url=src_parsed, dest=dest_parsed)
+    src_parsed = parse_url(bigstitcher_xml)
+    dest_parsed = parse_url(dest)
+
+    if image_names is not None:
+        image_names_parsed = image_names.replace(" ", "").split(",")
+    else:
+        image_names_parsed = image_names
+
+    save_points(
+        bigstitcher_url=src_parsed, dest=dest_parsed, image_names=image_names_parsed
+    )
 
 
-def save_points(bigstitcher_url: URL, dest: URL):
+def save_points(
+    bigstitcher_url: URL, dest: URL, image_names: Iterable[str] | None = None
+):
     bs_model = read_bigstitcher_xml(bigstitcher_url)
     save_interest_points(
-        bs_model=bs_model, alignment_url=bigstitcher_url.parent, dest=dest
+        bs_model=bs_model,
+        alignment_url=bigstitcher_url.parent,
+        dest=dest,
+        image_names=image_names,
     )
 
 
@@ -171,7 +213,6 @@ def save_neuroglancer_json(
 
 @cli.command("tabulate-matches")
 @click.option("--bigstitcher-xml", type=click.STRING, required=True)
-@click.option("--interest-points", type=click.STRING, default=None)
 @click.option("--output", type=click.STRING, default="csv")
 def tabulate_matches_cli(bigstitcher_xml: str, output: Literal["csv"] | None):
     """
@@ -183,7 +224,106 @@ def tabulate_matches_cli(bigstitcher_xml: str, output: Literal["csv"] | None):
     summarized = fetch_summarize_matches(
         bigstitcher_xml=bigstitcher_xml_url, pool=pool, anon=anon
     )
+
     if output == "csv":
-        click.echo(summarized.write_csv())
+        origin_xyz = summarized["image_origin_self"].to_numpy()
+        csv_friendly = summarized.drop("image_origin_self").with_columns(
+            image_origin_self_x=origin_xyz[:, 0],
+            image_origin_self_y=origin_xyz[:, 1],
+            image_origin_self_z=origin_xyz[:, 2],
+        )
+        click.echo(csv_friendly.write_csv())
     else:
         raise ValueError(f'Format {output} is not recognized. Allowed values: ("csv",)')
+
+
+@cli.command("view-bsxml")
+@click.option("--bigstitcher-xml", type=click.STRING, required=True)
+@click.option("--transform-index", type=click.INT, default=-1)
+@click.option("--interest-points", type=click.STRING, default=None)
+@click.option("--host", type=click.STRING, default=None)
+@click.option("--view-setups", type=click.STRING, default="all")
+@click.option("--channels", type=click.STRING, default="all")
+@click.option("--contrast-limits", type=click.STRING, default=None)
+@click.option("--bind-address", type=click.STRING, default="localhost")
+def view_bsxml_cli(
+    bigstitcher_xml: str,
+    transform_index: int,
+    host: str | None,
+    view_setups: str,
+    interest_points: str | None,
+    channels: str,
+    contrast_limits: str | None,
+    bind_address: str,
+):
+    if contrast_limits is not None:
+        contrast_limits_parsed = tuple(int(x) for x in contrast_limits.split(","))
+        if len(contrast_limits_parsed) != 2:
+            raise ValueError(
+                f"Contrast limits must be two ints separated by a comma. Got {contrast_limits} instead."
+            )
+    else:
+        contrast_limits_parsed = None
+
+    if bind_address == "ip":
+        neuroglancer.set_server_bind_address(socket.gethostbyname(socket.gethostname()))
+    else:
+        neuroglancer.set_server_bind_address("localhost")
+
+    if channels != "all":
+        channels_parsed = tuple(int(x) for x in channels.split(","))
+    else:
+        channels_parsed = "all"
+
+    if host is None:
+        host_parsed = None
+    else:
+        host_parsed = parse_url(host)
+
+    viewer = view_bsxml(
+        bs_model=parse_url(bigstitcher_xml),
+        host=host_parsed,
+        view_setups=view_setups,
+        channels=channels_parsed,
+        transform_index=transform_index,
+        contrast_limits=contrast_limits_parsed,
+        interest_points=interest_points,
+    )
+
+    print(f"Viewer link: {viewer}")
+    input("Press enter to exit")
+
+
+def view_bsxml(
+    *,
+    bs_model: SpimData2,
+    host: URL | None = None,
+    view_setups: str | None = None,
+    channels: str | None = None,
+    contrast_limits: tuple[int, int] | None,
+    interest_points: Literal["points", "matches"] | None = None,
+    transform_index: int,
+):
+    display_settings: dict[str, int | None]
+    if contrast_limits is not None:
+        display_settings = {
+            "start": contrast_limits[0],
+            "stop": contrast_limits[1],
+            "min": contrast_limits[0] - abs(contrast_limits[1] - contrast_limits[1]),
+            "max": contrast_limits[1] + abs(contrast_limits[1] - contrast_limits[1]),
+        }
+    else:
+        display_settings = {"start": None, "stop": None, "min": None, "max": None}
+    state = spimdata_to_neuroglancer(
+        bs_model,
+        anon=True,
+        host=host,
+        view_setups=view_setups,
+        channels=channels,
+        display_settings=display_settings,
+        transform_index=transform_index,
+        interest_points=interest_points,
+    )
+    viewer = neuroglancer.Viewer()
+    viewer.set_state(state)
+    return viewer

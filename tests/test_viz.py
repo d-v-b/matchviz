@@ -10,13 +10,12 @@ from matchviz.core import ome_ngff_to_coords, scale_points
 import pytest
 
 from matchviz.bigstitcher import (
-    get_tile_coords,
     image_name_to_tile_coord,
-    load_points_tile,
     parse_idmap,
     read_bigstitcher_xml,
     save_annotations,
     save_interest_points,
+    read_interest_points,
 )
 
 
@@ -51,15 +50,12 @@ def test_viz(tmpdir):
 def test_save_points_tile(tmpdir):
     bs_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/"
     bs_model = read_bigstitcher_xml(os.path.join(bs_url, "bigstitcher.xml"))
-    tile_name = "tile_x_0000_y_0000_z_0000_ch_488"
     alignment_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/interestpoints.n5/tpId_0_viewSetupId_0/"
-    tile_coords = get_tile_coords(bs_model)
     save_annotations(
+        bs_model=bs_model,
         image_id=0,
-        tile_name=tile_name,
-        interest_points=alignment_url,
+        alignment_url=alignment_url,
         dest_url=str(tmpdir),
-        tile_coords=tile_coords,
     )
 
 
@@ -79,15 +75,17 @@ def test_parse_idmap():
 
 @pytest.mark.skip
 def test_load_points():
-    url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/interestpoints.n5/tpId_0_viewSetupId_3/beads/"
-    _ = load_points_tile(url)
+    url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/interestpoints.n5"
+    _ = read_interest_points(store=url, path="tpId_0_viewSetupId_3/beads/", anon=True)
 
 
 def test_plot_points():
-    url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/interestpoints.n5/tpId_0_viewSetupId_0/beads/"
+    ip_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/interestpoints.n5"
     image_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38/SPIM.ome.zarr/tile_x_0000_y_0000_z_0000_ch_488.zarr"
     coords = ome_ngff_to_coords(image_url)
-    points_df, match_df = load_points_tile(url)
+    points_df = read_interest_points(
+        store=ip_url, path="tpId_0_viewSetupId_3/beads/", anon=True
+    )
     scale_points(points_df, coords)
     plot_points(points_df, image_url)
 
