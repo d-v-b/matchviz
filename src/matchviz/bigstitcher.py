@@ -92,6 +92,11 @@ def spimdata_to_neuroglancer(
         units=units,
     )
 
+    annotation_shader = """void main() {
+  setColor(prop_color());
+  setPointMarkerSize(prop_size());
+}"""
+
     state = neuroglancer.ViewerState(dimensions=output_space)
 
     if bs_model.base_path.path == ".":
@@ -269,11 +274,14 @@ def spimdata_to_neuroglancer(
                         ),
                     ],
                     annotations=[
-                        neuroglancer.PointAnnotation(id=idx, point=point)
+                        neuroglancer.PointAnnotation(
+                            id=idx, point=point, props=[color_str, 10]
+                        )
                         for idx, point in enumerate(
                             points_data["point_loc_xyz"].to_numpy()[:, ::-1]
                         )
                     ],
+                    shader=annotation_shader,
                 ),
             )
 
