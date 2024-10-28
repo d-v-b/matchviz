@@ -14,7 +14,7 @@ from matchviz import (
     create_neuroglancer_state,
 )
 from matchviz.bigstitcher import (
-    bdv_to_neuroglancer,
+    spimdata_to_neuroglancer,
     fetch_summarize_matches,
     get_image_group,
     get_tilegroup_url,
@@ -237,7 +237,7 @@ def tabulate_matches_cli(bigstitcher_xml: str, output: Literal["csv"] | None):
         raise ValueError(f'Format {output} is not recognized. Allowed values: ("csv",)')
 
 
-@cli.command("view-bdv")
+@cli.command("view-bsxml")
 @click.option("--bigstitcher-xml", type=click.STRING, required=True)
 @click.option("--transform-index", type=click.INT, default=-1)
 @click.option("--interest-points", type=click.STRING, default=None)
@@ -246,7 +246,7 @@ def tabulate_matches_cli(bigstitcher_xml: str, output: Literal["csv"] | None):
 @click.option("--channels", type=click.STRING, default="all")
 @click.option("--contrast-limits", type=click.STRING, default=None)
 @click.option("--bind-address", type=click.STRING, default="localhost")
-def view_bdv_cli(
+def view_bsxml_cli(
     bigstitcher_xml: str,
     transform_index: int,
     host: str | None,
@@ -280,7 +280,7 @@ def view_bdv_cli(
     else:
         host_parsed = parse_url(host)
 
-    viewer = view_bdv(
+    viewer = view_bsxml(
         bs_model=parse_url(bigstitcher_xml),
         host=host_parsed,
         view_setups=view_setups,
@@ -294,7 +294,7 @@ def view_bdv_cli(
     input("Press enter to exit")
 
 
-def view_bdv(
+def view_bsxml(
     *,
     bs_model: SpimData2,
     host: URL | None = None,
@@ -314,7 +314,7 @@ def view_bdv(
         }
     else:
         display_settings = {"start": None, "stop": None, "min": None, "max": None}
-    state = bdv_to_neuroglancer(
+    state = spimdata_to_neuroglancer(
         bs_model,
         anon=True,
         host=host,

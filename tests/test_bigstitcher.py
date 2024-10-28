@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from yarl import URL
 from matchviz.bigstitcher import (
-    bdv_to_neuroglancer,
+    spimdata_to_neuroglancer,
     read_all_interest_points,
     read_bigstitcher_xml,
 )
@@ -77,7 +77,7 @@ def test_hoaffine_to_array() -> None:
 @pytest.mark.parametrize("bigstitcher_xml", [0], indirect=True)
 def test_bdv_to_neuroglancer(bigstitcher_xml: str) -> None:
     host = None
-    viewer_state = bdv_to_neuroglancer(
+    viewer_state = spimdata_to_neuroglancer(
         URL(bigstitcher_xml),
         host=host,
         display_settings={"start": 100, "stop": 200, "min": 0, "max": 400},
