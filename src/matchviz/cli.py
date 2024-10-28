@@ -8,6 +8,7 @@ import click
 import fsspec
 import fsspec.implementations
 import fsspec.implementations.local
+import numpy as np
 from yarl import URL
 from matchviz import (
     create_neuroglancer_state,
@@ -15,6 +16,7 @@ from matchviz import (
 from matchviz.bigstitcher import (
     bdv_to_neuroglancer,
     fetch_summarize_matches,
+    get_image_group,
     get_tilegroup_url,
     read_bigstitcher_xml,
     save_interest_points,
@@ -29,7 +31,7 @@ from s3fs import S3FileSystem
 import neuroglancer
 from matchviz.plot import plot_matches_grid
 from pydantic_bigstitcher import SpimData2
-
+import polars as pl
 
 @click.group("matchviz")
 def cli(): ...
@@ -66,9 +68,32 @@ def plot_matches_cli(
     data = fetch_summarize_matches(
         bigstitcher_xml=bigstitcher_xml_normalized, pool=pool, anon=anon
     )
+    # get projection images of the relevant view_setups
+    summary_images: dict[str, np.ndarray] = {}
+    for view_setup_id in tuple(data['image_id_self'].unique()):
+        msg = get_image_group(
+            bigstitcher_xml=bigstitcher_xml, 
+            image_id = view_setup_id            
+        )
+        arrays_sorted = tuple(sorted(msg.items(), key = lambda kv: np.prod(kv[1].shape)))
+        _, smallest = arrays_sorted[0]
+        proj_dims = set(smallest.dims) & {'t', 'c', 'z'}
+        projected = smallest.max(proj_dims).compute()
+        if projected.ndim != 2:
+            raise ValueError('only 2D arrays are supported')
+        #new_origin = data.filter(pl.col('image_id_self') == view_setup_id)['image_origin_self'][0][:2]
+        #old_x = projected.coords['x'][0]
+        #old_y = projected.coords['y'][0]
+        #shifted_projected = projected.assign_coords(
+        #    {
+        #        'x': old_x + (new_origin[0] - old_x), 
+        #        'y': old_y + (new_origin[1] - old_y)}
+        #    )
+        summary_images[view_setup_id] = projected
 
     fig = plot_matches_grid(
-        data=data,
+        images=summary_images,
+        point_df=data,
         dataset_name=bigstitcher_xml_normalized.path,
         invert_x=invert_x_axis,
         invert_y=invert_y_axis,

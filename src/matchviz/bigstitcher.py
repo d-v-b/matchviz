@@ -1,6 +1,7 @@
 from __future__ import annotations
 from itertools import accumulate
 import pydantic_bigstitcher.transform
+import xarray
 from zarr import N5FSStore
 from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
@@ -44,6 +45,7 @@ from yarl import URL
 import neuroglancer
 
 from pydantic_bigstitcher.transform import Axes as T_XYZ
+from xarray_ome_ngff.v04.multiscale import read_multiscale_group
 
 xyz = ("x", "y", "z")
 random.seed(0)
@@ -439,7 +441,7 @@ def read_interest_points(
     matches_exist = "data" in correspondences_group
 
     if not matches_exist:
-        log.info(f"No matches found for {get_store_url(store_parsed)}.")
+        log.info(f"No matches found in {get_store_url(store_parsed)} for image {image_id}.")
         result = points_result
     else:
         id_map = parse_idmap(correspondences_group.attrs["idMap"])
@@ -824,3 +826,26 @@ def summarize_matches(
     )
 
     return out
+
+from pydantic_bigstitcher import ZarrImageLoader
+
+def get_image_group(bigstitcher_xml: URL, image_id: str) -> dict[str, xarray.DataArray]:
+    bs_model = read_bigstitcher_xml(bigstitcher_xml)
+    image_loader = bs_model.sequence_description.image_loader
+    if isinstance(image_loader, ZarrImageLoader):
+        # not sure bigstitcher support local zarr arrays yet
+        scheme = 's3://'
+        bucket = image_loader.s3bucket
+        path = image_loader.zarr.path
+        zgroups_by_setup = {s.setup: s for s in image_loader.zgroups.elements}
+        
+        if image_id not in zgroups_by_setup:
+            raise ValueError(f"image {image_id} not found in zarr groups")
+        
+        group_name = zgroups_by_setup[image_id].path
+        zgroup = zarr.open_group(f'{scheme}{bucket}/{path}/{group_name}', mode='r')
+        msg = read_multiscale_group(zgroup, array_wrapper={"name": "dask_array", "config": {"chunks": "auto"}})
+        return msg
+    else:
+        raise NotImplementedError
+
