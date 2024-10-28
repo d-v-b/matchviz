@@ -30,6 +30,7 @@ from matchviz.transform import (
 )
 from matchviz.types import TileCoordinate
 from pydantic_bigstitcher.transform import HoAffine
+from pydantic_bigstitcher import ZarrImageLoader
 
 if TYPE_CHECKING:
     pass
@@ -74,7 +75,7 @@ def spimdata_to_neuroglancer(
     channels: Literal["all"] | Iterable[int] = "all",
     interest_points: Literal["points", "matches"] | None = None,
     display_settings: dict[str, Any] | None = None,
-    bind_address = '0.0.0.0'
+    bind_address="0.0.0.0",
 ) -> neuroglancer.ViewerState:
     bs_model = read_bigstitcher_xml(xml_path, anon=anon)
     sample_vs = bs_model.sequence_description.view_setups.elements[0]
@@ -95,7 +96,9 @@ def spimdata_to_neuroglancer(
 
     if bs_model.base_path.path == ".":
         if host is None:
-            server = StaticFileServer(str(xml_path.parent.path), bind_address=bind_address, daemon=True)
+            server = StaticFileServer(
+                str(xml_path.parent.path), bind_address=bind_address, daemon=True
+            )
             base_url = URL(server.url)
         else:
             server = None
@@ -105,13 +108,13 @@ def spimdata_to_neuroglancer(
         raise ValueError(f"Base path {bs_model.base_path.path} is not supported")
 
     image_loader = bs_model.sequence_description.image_loader
-    image_format : Literal["n5", "zarr"]
-    image_format = image_loader.fmt.split('.')[-1]
+    image_format: Literal["n5", "zarr"]
+    image_format = image_loader.fmt.split(".")[-1]
     if getattr(image_loader, image_format).type == "absolute":
         if hasattr(image_loader, "s3bucket"):
             prefix = URL(f"s3://{image_loader.s3bucket}")
         else:
-            prefix = base_url                
+            prefix = base_url
         container_root = prefix / getattr(image_loader, image_format).path
     else:
         container_root = base_url / getattr(image_loader, image_format).path
@@ -215,8 +218,7 @@ def spimdata_to_neuroglancer(
             name=image_name,
             layer=neuroglancer.ImageLayer(
                 source=neuroglancer.LayerDataSource(
-                    url=image_source, 
-                    transform=image_transform
+                    url=image_source, transform=image_transform
                 ),
                 shader_controls=image_shader_controls,
                 shader=shader,
@@ -327,7 +329,7 @@ def parse_idmap(data: dict[str, int]) -> dict[tuple[str, str, str], str]:
 
 
 def parse_matches(
-    *, name: str, data: np.ndarray, id_map: dict[tuple[int, int, str], int]
+    *, name: str, data: np.ndarray, id_map: dict[tuple[str, str, str], str]
 ):
     """
     Convert a name, match data, and an id mapping to a polars dataframe that contains
@@ -343,7 +345,7 @@ def parse_matches(
     id_self = int(match.group(1))
 
     # map from pair index to image id
-    remap = {value: key[1] for key, value in id_map.items()}
+    remap = {int(value): int(key[1]) for key, value in id_map.items()}
 
     # replace the pair id value with an actual image index reference in the last column
     data_copy[:, -1] = np.vectorize(remap.get)(data[:, -1])
@@ -423,7 +425,9 @@ def read_interest_points(
     matches_exist = "data" in correspondences_group
 
     if not matches_exist:
-        log.info(f"No matches found in {get_store_url(store_parsed)} for image {image_id}.")
+        log.info(
+            f"No matches found in {get_store_url(store_parsed)} for image {image_id}."
+        )
         result = points_result
     else:
         id_map = parse_idmap(correspondences_group.attrs["idMap"])
@@ -479,7 +483,7 @@ def get_transforms(
     i.e. the first transform is the first one that will be applied in the transform sequence.
     """
     result_tforms: dict[
-        int, tuple[pydantic_bigstitcher.transform.Transform[T_XYZ], ...]
+        str, tuple[pydantic_bigstitcher.transform.Transform[T_XYZ], ...]
     ] = {}
     for vs, vr in zip(
         bs_model.sequence_description.view_setups.elements,
@@ -711,7 +715,7 @@ def save_interest_points(
 def fetch_summarize_matches(
     *, bigstitcher_xml: URL, pool: ThreadPoolExecutor, anon: bool = True
 ) -> pl.DataFrame:
-    log = structlog.get_logger()
+    _ = structlog.get_logger()
     bs_model = read_bigstitcher_xml(bigstitcher_xml)
     interest_points_url = bigstitcher_xml.parent.joinpath("interestpoints.n5")
     all_matches = read_all_interest_points(
@@ -738,13 +742,12 @@ def summarize_matches(
     matches_tx = {}
     origins = {}
     for k, df in matches_dict.items():
-
         # the logic here is to assume that every transformation up the the final one is the baseline
         # and the final transform is the one estimated from the detected interest points. This assumption
         # may not hold in general.
         txs = transforms[k]
         point_loc_xyz = df["point_loc_xyz"]
-        
+
         if len(txs) > 1:
             pre_aff, post_aff = compose_transforms(txs[:-1]), compose_transforms(txs)
         else:
@@ -764,7 +767,9 @@ def summarize_matches(
             point_loc_xyz_fitted = apply_hoaffine(
                 tx=post_aff, data=point_loc_xyz.to_numpy(), dimensions=(xyz)
             )
-            error = np.linalg.norm(point_loc_xyz_fitted - point_loc_xyz_baseline, axis=1)
+            error = np.linalg.norm(
+                point_loc_xyz_fitted - point_loc_xyz_baseline, axis=1
+            )
         else:
             point_loc_xyz_fitted = [None] * len(point_loc_xyz)
             error = [None] * len(point_loc_xyz)
@@ -779,9 +784,9 @@ def summarize_matches(
     # the only possible nulls should be points that were not matched, so we drop all of those to just
     # get the set of matched points
     # specify diagonal concat because frames with no matches might have a different column order
-    all_matches = pl.concat(
-        matches_tx.values(),
-        how='diagonal').filter(~pl.col('image_id_other').is_null())
+    all_matches = pl.concat(matches_tx.values(), how="diagonal").filter(
+        ~pl.col("image_id_other").is_null()
+    )
 
     out = (
         all_matches.group_by("image_id_self", "image_id_other")
@@ -809,25 +814,25 @@ def summarize_matches(
 
     return out
 
-from pydantic_bigstitcher import ZarrImageLoader
 
 def get_image_group(bigstitcher_xml: URL, image_id: str) -> dict[str, xarray.DataArray]:
     bs_model = read_bigstitcher_xml(bigstitcher_xml)
     image_loader = bs_model.sequence_description.image_loader
     if isinstance(image_loader, ZarrImageLoader):
         # not sure bigstitcher support local zarr arrays yet
-        scheme = 's3://'
+        scheme = "s3://"
         bucket = image_loader.s3bucket
         path = image_loader.zarr.path
         zgroups_by_setup = {s.setup: s for s in image_loader.zgroups.elements}
-        
+
         if image_id not in zgroups_by_setup:
             raise ValueError(f"image {image_id} not found in zarr groups")
-        
+
         group_name = zgroups_by_setup[image_id].path
-        zgroup = zarr.open_group(f'{scheme}{bucket}/{path}/{group_name}', mode='r')
-        msg = read_multiscale_group(zgroup, array_wrapper={"name": "dask_array", "config": {"chunks": "auto"}})
+        zgroup = zarr.open_group(f"{scheme}{bucket}/{path}/{group_name}", mode="r")
+        msg = read_multiscale_group(
+            zgroup, array_wrapper={"name": "dask_array", "config": {"chunks": "auto"}}
+        )
         return msg
     else:
         raise NotImplementedError
-
