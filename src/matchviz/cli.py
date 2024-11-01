@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 import json
+from pathlib import Path
 import socket
 from typing import Iterable, Literal, Sequence
 import click
@@ -32,6 +33,7 @@ import neuroglancer
 from matchviz.plot import plot_matches_grid
 from pydantic_bigstitcher import SpimData2
 import polars as pl
+import json as json_lib
 
 @click.group("matchviz")
 def cli(): ...
@@ -245,7 +247,11 @@ def tabulate_matches_cli(bigstitcher_xml: str, output: Literal["csv"] | None):
 @click.option("--view-setups", type=click.STRING, default="all")
 @click.option("--channels", type=click.STRING, default="all")
 @click.option("--contrast-limits", type=click.STRING, default=None)
+@click.option("--cross-section-scale", type=click.FLOAT, default=None)
+@click.option("--position", type=click.STRING, default=None)
 @click.option("--bind-address", type=click.STRING, default="localhost")
+@click.option("--json", type=click.STRING, default=None)
+@click.option("--no-server", type=click.BOOL, default=False, is_flag=True)
 def view_bsxml_cli(
     bigstitcher_xml: str,
     transform_index: int,
@@ -254,7 +260,11 @@ def view_bsxml_cli(
     interest_points: str | None,
     channels: str,
     contrast_limits: str | None,
+    cross_section_scale: str | None,
+    position: float | None,
     bind_address: str,
+    json: str | None,
+    no_server: bool
 ):
     if contrast_limits is not None:
         contrast_limits_parsed = tuple(int(x) for x in contrast_limits.split(","))
@@ -279,7 +289,12 @@ def view_bsxml_cli(
         host_parsed = None
     else:
         host_parsed = parse_url(host)
-
+    
+    if position is not None:
+        position_parsed = tuple(float(x) for x in position.split(","))
+    else:
+        position_parsed = position
+    
     viewer = view_bsxml(
         bs_model=parse_url(bigstitcher_xml),
         host=host_parsed,
@@ -287,12 +302,20 @@ def view_bsxml_cli(
         channels=channels_parsed,
         transform_index=transform_index,
         contrast_limits=contrast_limits_parsed,
+        cross_section_scale=cross_section_scale,
+        position=position_parsed,
         interest_points=interest_points,
     )
 
-    print(f"Viewer link: {viewer}")
-    input("Press enter to exit")
+    if json is not None:
+        Path(json).write_text(json_lib.dumps(neuroglancer.url_state.to_json(viewer.state)))
+        click.echo(f"Saved neuroglancer state to {json}")
 
+    if not no_server:
+        print(f"Viewer link: {viewer}")
+        input("Press 'enter' to exit.")
+    else:
+        click.echo('The `--no-server` flag was set, so no neuroglancer server was started. Goodbye.')
 
 def view_bsxml(
     *,
@@ -301,9 +324,11 @@ def view_bsxml(
     view_setups: str | None = None,
     channels: str | None = None,
     contrast_limits: tuple[int, int] | None,
+    cross_section_scale: float | None = None,
+    position: float | None = None,
     interest_points: Literal["points", "matches"] | None = None,
     transform_index: int,
-):
+) -> neuroglancer.Viewer:
     display_settings: dict[str, int | None]
     if contrast_limits is not None:
         display_settings = {
@@ -325,5 +350,9 @@ def view_bsxml(
         interest_points=interest_points,
     )
     viewer = neuroglancer.Viewer()
+    if cross_section_scale is not None:
+        state.crossSectionScale = cross_section_scale
+    if position is not None:
+        state.position = position
     viewer.set_state(state)
     return viewer
