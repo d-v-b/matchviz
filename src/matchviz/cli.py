@@ -68,11 +68,10 @@ def plot_matches_cli(
     metric: PlotMetric,
 ):
     pool = ThreadPoolExecutor(max_workers=16)
-    anon = True
 
     bigstitcher_xml_normalized = parse_url(bigstitcher_xml)
     data = fetch_summarize_matches(
-        bigstitcher_xml=bigstitcher_xml_normalized, pool=pool, anon=anon
+        bigstitcher_xml=bigstitcher_xml_normalized, pool=pool
     )
     # get projection images of the relevant view_setups
     summary_images: dict[str, xarray.DataArray] = {}
@@ -226,10 +225,7 @@ def tabulate_matches_cli(bigstitcher_xml: str, output: Literal["csv"] | None):
     """
     pool = ThreadPoolExecutor(max_workers=16)
     bigstitcher_xml_url = URL(bigstitcher_xml)
-    anon = True
-    summarized = fetch_summarize_matches(
-        bigstitcher_xml=bigstitcher_xml_url, pool=pool, anon=anon
-    )
+    summarized = fetch_summarize_matches(bigstitcher_xml=bigstitcher_xml_url, pool=pool)
 
     if output == "csv":
         origin_xyz = summarized["image_origin_self"].to_numpy()
@@ -299,7 +295,6 @@ def view_bsxml_cli(
     else:
         position_parsed = position
 
-
     viewer = view_bsxml(
         bs_model=parse_url(bigstitcher_xml),
         host=host_parsed,
@@ -351,7 +346,6 @@ def view_bsxml(
         display_settings = {"start": None, "stop": None, "min": None, "max": None}
     state = spimdata_to_neuroglancer(
         bs_model,
-        anon=True,
         host=host,
         view_setups=view_setups,
         channels=channels,
