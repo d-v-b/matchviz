@@ -55,7 +55,7 @@ def test_compose_transforms() -> None:
         affine=array_to_affine(np.eye(2) * 2, dimensions=dimensions),
         translation={"x": 3, "y": 4},
     )
-    observed = compose_hoaffines(tx_a, tx_b, dimensions=dimensions)
+    observed = compose_hoaffines(tx_a, tx_b)
 
     expected = HoAffine(
         affine=array_to_affine(np.eye(2) * 8, dimensions=dimensions),

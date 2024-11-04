@@ -513,7 +513,7 @@ def compose_transforms(
     hoaffines = tuple(t.transform for t in transforms)
     if not all(isinstance(t, HoAffine) for t in hoaffines):
         raise ValueError("Expected all transforms to be of type HoAffine")
-    return tuple(accumulate(hoaffines, partial(compose_hoaffines, dimensions=xyz)))[-1]
+    return tuple(accumulate(hoaffines, compose_hoaffines))[-1]
 
 
 class InterestPointsGroupMeta(BaseModel):
