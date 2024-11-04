@@ -58,8 +58,8 @@ class SetupTimepoint:
     timepoint: int
 
 
-def read_bigstitcher_xml(url: URL, anon: bool = True) -> SpimData2:
-    fs, path = fsspec.url_to_fs(str(url), anon=anon)
+def read_bigstitcher_xml(url: URL) -> SpimData2:
+    fs, path = fsspec.url_to_fs(str(url))
     bs_xml = fs.cat_file(path)
     bs_model = SpimData2.from_xml(bs_xml)
     return bs_model
@@ -68,7 +68,6 @@ def read_bigstitcher_xml(url: URL, anon: bool = True) -> SpimData2:
 def spimdata_to_neuroglancer(
     xml_path: URL,
     *,
-    anon: bool = True,
     host: URL | None = None,
     transform_index: int = -1,
     view_setups: Literal["all"] | Iterable[str] = "all",
@@ -77,7 +76,7 @@ def spimdata_to_neuroglancer(
     display_settings: dict[str, Any] | None = None,
     bind_address="127.0.0.1",
 ) -> neuroglancer.ViewerState:
-    bs_model = read_bigstitcher_xml(xml_path, anon=anon)
+    bs_model = read_bigstitcher_xml(xml_path)
     sample_vs = bs_model.sequence_description.view_setups.elements[0]
     unit = sample_vs.voxel_size.unit
     scales = base_scale_dict = {
@@ -389,7 +388,7 @@ def read_interest_points(
     path = ips_by_setup[image_id].path
 
     if isinstance(store, (str, URL)):
-        store_parsed = zarr.N5FSStore(str(store), mode="r", anon=True)
+        store_parsed = zarr.N5FSStore(str(store), mode="r")
     else:
         store_parsed = store
 
@@ -724,7 +723,9 @@ def save_interest_points(
 
 
 def fetch_summarize_matches(
-    *, bigstitcher_xml: URL, pool: ThreadPoolExecutor, anon: bool = True
+    *,
+    bigstitcher_xml: URL,
+    pool: ThreadPoolExecutor,
 ) -> pl.DataFrame:
     _ = structlog.get_logger()
     bs_model = read_bigstitcher_xml(bigstitcher_xml)
