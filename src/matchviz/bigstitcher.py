@@ -75,7 +75,7 @@ def spimdata_to_neuroglancer(
     channels: Literal["all"] | Iterable[int] = "all",
     interest_points: Literal["points", "matches"] | None = None,
     display_settings: dict[str, Any] | None = None,
-    bind_address="0.0.0.0",
+    bind_address="127.0.0.1",
 ) -> neuroglancer.ViewerState:
     bs_model = read_bigstitcher_xml(xml_path, anon=anon)
     sample_vs = bs_model.sequence_description.view_setups.elements[0]
@@ -176,7 +176,9 @@ def spimdata_to_neuroglancer(
             *tforms_filtered[:transform_index],
             tforms_filtered[transform_index],
         ]
+
         final_transform = compose_transforms(tforms_indexed)
+
         # neuroglancer expects ndim x ndim + 1 matrix
         matrix = hoaffine_to_array(final_transform, dimensions=dimension_names_out)[:-1]
 
@@ -217,11 +219,7 @@ def spimdata_to_neuroglancer(
             source_rank=len(dimension_names_out),
             matrix=matrix,
         )
-        # TODO: choose a source class based on whether a host was provided, so that
-        # local files can potentially be viewed.
-        state.layers.append(
-            name=image_name,
-            layer=neuroglancer.ImageLayer(
+        image_layer=neuroglancer.ImageLayer(
                 source=neuroglancer.LayerDataSource(
                     url=image_source, transform=image_transform
                 ),
@@ -229,8 +227,10 @@ def spimdata_to_neuroglancer(
                 shader=shader,
                 blend="additive",
             ),
-        )
 
+        # TODO: choose a source class based on whether a host was provided, so that
+        # local files can potentially be viewed.
+    
         if interest_points == "points":
             points_data = read_interest_points(
                 bs_model=bs_model,
@@ -238,10 +238,8 @@ def spimdata_to_neuroglancer(
                 store=xml_path.parent / "interestpoints.n5",
             )
 
-            # TODO: apply translation to nominal grid for points
-
             points_affine = compose_hoaffines(
-                extra_points_transform, final_transform, dimensions=xyz
+                extra_points_transform, final_transform
             )
 
             points_transform = neuroglancer.CoordinateSpaceTransform(
@@ -255,10 +253,7 @@ def spimdata_to_neuroglancer(
 
             # points_data = points_data.with_columns(loc_xyz_transformed=locs_transformed)
             points_map[vs_id] = points_data
-
-            state.layers.append(
-                name="interest_points",
-                layer=neuroglancer.LocalAnnotationLayer(
+            annotation_layer = neuroglancer.LocalAnnotationLayer(
                     transform=points_transform,
                     dimensions=output_space,
                     annotation_properties=[
@@ -282,9 +277,17 @@ def spimdata_to_neuroglancer(
                         )
                     ],
                     shader=annotation_shader,
-                ),
-            )
+                )
 
+            state.layers.append(
+                name="interest_points",
+                layer=annotation_layer
+                )
+                
+    state.layers.append(
+        name=image_name,
+        layer=image_layer            
+    )
     return state
 
 
