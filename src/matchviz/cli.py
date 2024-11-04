@@ -334,6 +334,7 @@ def view_bsxml(
     interest_points: Literal["points", "matches"] | None = None,
     transform_index: int,
 ) -> neuroglancer.Viewer:
+
     display_settings: dict[str, int | None]
     if contrast_limits is not None:
         display_settings = {
