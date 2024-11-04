@@ -11,6 +11,7 @@ import fsspec.implementations
 import fsspec.implementations.local
 import numpy as np
 from yarl import URL
+import xarray
 from matchviz import (
     create_neuroglancer_state,
 )
@@ -32,8 +33,9 @@ from s3fs import S3FileSystem
 import neuroglancer
 from matchviz.plot import plot_matches_grid
 from pydantic_bigstitcher import SpimData2
-import polars as pl
+from matchviz.plot import PlotMetric
 import json as json_lib
+
 
 @click.group("matchviz")
 def cli(): ...
@@ -57,11 +59,13 @@ log_level = click.option("--log-level", type=click.STRING, default="info")
 )
 @click.option("--invert-y-axis", type=click.BOOL, is_flag=True, default=False)
 @click.option("--invert-x-axis", type=click.BOOL, is_flag=True, default=False)
+@click.option("--metric", type=click.STRING, default="transform_error_max")
 def plot_matches_cli(
     bigstitcher_xml: str,
     dest: str,
     invert_y_axis: bool,
     invert_x_axis: bool,
+    metric: PlotMetric,
 ):
     pool = ThreadPoolExecutor(max_workers=16)
     anon = True
@@ -71,24 +75,23 @@ def plot_matches_cli(
         bigstitcher_xml=bigstitcher_xml_normalized, pool=pool, anon=anon
     )
     # get projection images of the relevant view_setups
-    summary_images: dict[str, np.ndarray] = {}
-    for view_setup_id in tuple(data['image_id_self'].unique()):
+    summary_images: dict[str, xarray.DataArray] = {}
+    for view_setup_id in tuple(data["image_id_self"].unique()):
         msg = get_image_group(
-            bigstitcher_xml=bigstitcher_xml, 
-            image_id = view_setup_id            
+            bigstitcher_xml=bigstitcher_xml_normalized, image_id=view_setup_id
         )
-        arrays_sorted = tuple(sorted(msg.items(), key = lambda kv: np.prod(kv[1].shape)))
+        arrays_sorted = tuple(sorted(msg.items(), key=lambda kv: np.prod(kv[1].shape)))
         _, smallest = arrays_sorted[0]
-        proj_dims = set(smallest.dims) & {'t', 'c', 'z'}
+        proj_dims = set(smallest.dims) & {"t", "c", "z"}
         projected = smallest.max(proj_dims).compute()
         if projected.ndim != 2:
-            raise ValueError('only 2D arrays are supported')
-        #new_origin = data.filter(pl.col('image_id_self') == view_setup_id)['image_origin_self'][0][:2]
-        #old_x = projected.coords['x'][0]
-        #old_y = projected.coords['y'][0]
-        #shifted_projected = projected.assign_coords(
+            raise ValueError("only 2D arrays are supported")
+        # new_origin = data.filter(pl.col('image_id_self') == view_setup_id)['image_origin_self'][0][:2]
+        # old_x = projected.coords['x'][0]
+        # old_y = projected.coords['y'][0]
+        # shifted_projected = projected.assign_coords(
         #    {
-        #        'x': old_x + (new_origin[0] - old_x), 
+        #        'x': old_x + (new_origin[0] - old_x),
         #        'y': old_y + (new_origin[1] - old_y)}
         #    )
         summary_images[view_setup_id] = projected
@@ -99,6 +102,7 @@ def plot_matches_cli(
         dataset_name=bigstitcher_xml_normalized.path,
         invert_x=invert_x_axis,
         invert_y=invert_y_axis,
+        metric=metric,
     )
     fig.savefig(dest)
 
@@ -264,7 +268,7 @@ def view_bsxml_cli(
     position: float | None,
     bind_address: str,
     json: str | None,
-    no_server: bool
+    no_server: bool,
 ):
     if contrast_limits is not None:
         contrast_limits_parsed = tuple(int(x) for x in contrast_limits.split(","))
@@ -289,12 +293,13 @@ def view_bsxml_cli(
         host_parsed = None
     else:
         host_parsed = parse_url(host)
-    
+
     if position is not None:
         position_parsed = tuple(float(x) for x in position.split(","))
     else:
         position_parsed = position
-    
+
+
     viewer = view_bsxml(
         bs_model=parse_url(bigstitcher_xml),
         host=host_parsed,
@@ -308,14 +313,19 @@ def view_bsxml_cli(
     )
 
     if json is not None:
-        Path(json).write_text(json_lib.dumps(neuroglancer.url_state.to_json(viewer.state)))
+        Path(json).write_text(
+            json_lib.dumps(neuroglancer.url_state.to_json(viewer.state))
+        )
         click.echo(f"Saved neuroglancer state to {json}")
 
     if not no_server:
         print(f"Viewer link: {viewer}")
         input("Press 'enter' to exit.")
     else:
-        click.echo('The `--no-server` flag was set, so no neuroglancer server was started. Goodbye.')
+        click.echo(
+            "The `--no-server` flag was set, so no neuroglancer server was started. Goodbye."
+        )
+
 
 def view_bsxml(
     *,

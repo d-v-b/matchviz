@@ -74,7 +74,7 @@ def spimdata_to_neuroglancer(
     view_setups: Literal["all"] | Iterable[str] = "all",
     channels: Literal["all"] | Iterable[int] = "all",
     interest_points: Literal["points", "matches"] | None = None,
-    display_settings: dict[str, Any] | None = None,
+    display_settings: dict[str, Any],
     bind_address="0.0.0.0",
 ) -> neuroglancer.ViewerState:
     bs_model = read_bigstitcher_xml(xml_path, anon=anon)
