@@ -11,7 +11,6 @@ from typing import Annotated, Any, Literal, cast, TYPE_CHECKING, Iterable
 from typing_extensions import TypedDict, deprecated
 from pydantic import BaseModel, BeforeValidator, Field
 from pydantic_zarr.v2 import ArraySpec, GroupSpec
-from functools import partial
 from matchviz.annotation import write_line_annotations, write_point_annotations
 import random
 import colorsys
@@ -190,24 +189,27 @@ def spimdata_to_neuroglancer(
         image_name = vs_id
 
         image_source = f"{image_format}://{image_path}"
-        h, s, l = (
+        hue, sat, lum = (
             random.random(),
             0.5 + random.random() / 2.0,
             0.4 + random.random() / 5.0,
         )
-        color = [int(256 * i) for i in colorsys.hls_to_rgb(h, l, s)]
+        color = [int(256 * i) for i in colorsys.hls_to_rgb(hue, lum, sat)]
         color_str = "#{0:02x}{1:02x}{2:02x}".format(*color)
         shader = (
             "#uicontrol invlerp normalized()\n"
             f'#uicontrol vec3 color color(default="{color_str}")\n'
             "void main(){{emitRGB(color * normalized());}}"
         )
-        image_shader_controls = {
-            "normalized": {
-                "range": [display_settings["start"], display_settings["stop"]],
-                "window": [display_settings["min"], display_settings["max"]],
+        if display_settings is not None:
+            image_shader_controls = {
+                "normalized": {
+                    "range": [display_settings["start"], display_settings["stop"]],
+                    "window": [display_settings["min"], display_settings["max"]],
+                }
             }
-        }
+        else:
+            image_shader_controls = None
         input_space = neuroglancer.CoordinateSpace(
             names=dimension_names_out, units=units, scales=input_scales
         )
@@ -218,18 +220,20 @@ def spimdata_to_neuroglancer(
             source_rank=len(dimension_names_out),
             matrix=matrix,
         )
-        image_layer=neuroglancer.ImageLayer(
-                source=neuroglancer.LayerDataSource(
-                    url=image_source, transform=image_transform
-                ),
-                shader_controls=image_shader_controls,
-                shader=shader,
-                blend="additive",
+        image_layer = neuroglancer.ImageLayer(
+            source=neuroglancer.LayerDataSource(
+                url=image_source, transform=image_transform
             ),
-
+            shader_controls=image_shader_controls,
+            shader=shader,
+            blend="additive",
+        )
+        state.layers.append(name=image_name, layer=image_layer)
         # TODO: choose a source class based on whether a host was provided, so that
         # local files can potentially be viewed.
-    
+
+        annotation_layer = []
+
         if interest_points == "points":
             points_data = read_interest_points(
                 bs_model=bs_model,
@@ -237,9 +241,7 @@ def spimdata_to_neuroglancer(
                 store=xml_path.parent / "interestpoints.n5",
             )
 
-            points_affine = compose_hoaffines(
-                extra_points_transform, final_transform
-            )
+            points_affine = compose_hoaffines(extra_points_transform, final_transform)
 
             points_transform = neuroglancer.CoordinateSpaceTransform(
                 output_dimensions=input_space,
@@ -253,40 +255,33 @@ def spimdata_to_neuroglancer(
             # points_data = points_data.with_columns(loc_xyz_transformed=locs_transformed)
             points_map[vs_id] = points_data
             annotation_layer = neuroglancer.LocalAnnotationLayer(
-                    transform=points_transform,
-                    dimensions=output_space,
-                    annotation_properties=[
-                        neuroglancer.AnnotationPropertySpec(
-                            id="color",
-                            type="rgb",
-                            default="green",
-                        ),
-                        neuroglancer.AnnotationPropertySpec(
-                            id="size",
-                            type="float32",
-                            default=10,
-                        ),
-                    ],
-                    annotations=[
-                        neuroglancer.PointAnnotation(
-                            id=idx, point=point, props=[color_str, 10]
-                        )
-                        for idx, point in enumerate(
-                            points_data["point_loc_xyz"].to_numpy()[:, ::-1]
-                        )
-                    ],
-                    shader=annotation_shader,
-                )
+                transform=points_transform,
+                dimensions=output_space,
+                annotation_properties=[
+                    neuroglancer.AnnotationPropertySpec(
+                        id="color",
+                        type="rgb",
+                        default="green",
+                    ),
+                    neuroglancer.AnnotationPropertySpec(
+                        id="size",
+                        type="float32",
+                        default=10,
+                    ),
+                ],
+                annotations=[
+                    neuroglancer.PointAnnotation(
+                        id=idx, point=point, props=[color_str, 10]
+                    )
+                    for idx, point in enumerate(
+                        points_data["point_loc_xyz"].to_numpy()[:, ::-1]
+                    )
+                ],
+                shader=annotation_shader,
+            )
 
-            state.layers.append(
-                name="interest_points",
-                layer=annotation_layer
-                )
-                
-    state.layers.append(
-        name=image_name,
-        layer=image_layer            
-    )
+            state.layers.append(name="interest_points", layer=annotation_layer)
+
     return state
 
 
@@ -328,7 +323,7 @@ def image_name_to_tile_coord(image_name: str) -> TileCoordinate:
     return coords_out
 
 
-def parse_idmap(data: dict[str, int]) -> dict[tuple[str, str, str], str]:
+def parse_idmap(data: dict[str, str]) -> dict[tuple[str, str, str], str]:
     """
     convert {'0,1,beads': 0} to {('0', '1', "beads"): '0'}
     """
