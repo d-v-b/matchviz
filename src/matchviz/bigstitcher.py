@@ -69,8 +69,8 @@ def spimdata_to_neuroglancer(
     *,
     host: URL | None = None,
     transform_index: int = -1,
-    view_setups: Literal["all"] | Iterable[str] = "all",
-    channels: Literal["all"] | Iterable[int] = "all",
+    view_setups: Iterable[str] | None = None,
+    channels: Iterable[int] | None = None,
     interest_points: Literal["points", "matches"] | None = None,
     display_settings: dict[str, Any] | None = None,
     bind_address="127.0.0.1",
@@ -125,7 +125,7 @@ def spimdata_to_neuroglancer(
     for view_reg in bs_model.view_registrations.elements:
         vs_id = view_reg.setup
 
-        if view_setups != "all" and vs_id not in view_setups:
+        if view_setups is not None and vs_id not in view_setups:
             continue
 
         maybe_view_setups = tuple(
@@ -140,7 +140,7 @@ def spimdata_to_neuroglancer(
 
         view_setup = maybe_view_setups[0]
 
-        if channels != "all" and int(view_setup.attributes.channel) not in channels:
+        if channels is not None and int(view_setup.attributes.channel) not in channels:
             continue
 
         if image_format == "zarr":
