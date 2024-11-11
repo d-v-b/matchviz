@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 import socket
-from typing import Iterable, Literal, Sequence
+from typing import Iterable, Literal, Sequence, cast
 import click
 import fsspec
 import fsspec.implementations
@@ -85,14 +85,7 @@ def plot_matches_cli(
         projected = smallest.max(proj_dims).compute()
         if projected.ndim != 2:
             raise ValueError("only 2D arrays are supported")
-        # new_origin = data.filter(pl.col('image_id_self') == view_setup_id)['image_origin_self'][0][:2]
-        # old_x = projected.coords['x'][0]
-        # old_y = projected.coords['y'][0]
-        # shifted_projected = projected.assign_coords(
-        #    {
-        #        'x': old_x + (new_origin[0] - old_x),
-        #        'y': old_y + (new_origin[1] - old_y)}
-        #    )
+
         summary_images[view_setup_id] = projected
 
     fig = plot_matches_grid(
@@ -117,6 +110,8 @@ def save_interest_points_cli(bigstitcher_xml: str, dest: str, image_names: str |
     # strip trailing '/' from src and dest
     src_parsed = parse_url(bigstitcher_xml)
     dest_parsed = parse_url(dest)
+
+    image_names_parsed: list[str] | None
 
     if image_names is not None:
         image_names_parsed = image_names.replace(" ", "").split(",")
@@ -261,17 +256,30 @@ def view_bsxml_cli(
     channels: str,
     contrast_limits: str | None,
     cross_section_scale: str | None,
-    position: float | None,
+    position: str | None,
     bind_address: str,
     json: str | None,
     no_server: bool,
 ):
+    if interest_points not in (None, "points", "matches"):
+        msg = (
+            f"Invalid interest points specification: {interest_points}. "
+            '--interest-points must be one of "points", "matches", or unset.'
+        )
+        raise ValueError(msg)
+
+    interest_points = cast(Literal["points", "matches"] | None, interest_points)
+
+    contrast_limits_parsed: tuple[int, int] | None
+    channels_parsed: tuple[int, ...] | None
+    position_parsed: tuple[float, float, float] | None
     if contrast_limits is not None:
-        contrast_limits_parsed = tuple(int(x) for x in contrast_limits.split(","))
-        if len(contrast_limits_parsed) != 2:
+        maybe_contrast = tuple(int(x) for x in contrast_limits.split(","))
+        if len(maybe_contrast) != 2:
             raise ValueError(
                 f"Contrast limits must be two ints separated by a comma. Got {contrast_limits} instead."
             )
+        contrast_limits_parsed = maybe_contrast
     else:
         contrast_limits_parsed = None
 
@@ -280,10 +288,10 @@ def view_bsxml_cli(
     else:
         neuroglancer.set_server_bind_address("localhost")
 
-    if channels != "all":
+    if channels is not None:
         channels_parsed = tuple(int(x) for x in channels.split(","))
     else:
-        channels_parsed = "all"
+        channels_parsed = None
 
     if host is None:
         host_parsed = None
@@ -291,9 +299,20 @@ def view_bsxml_cli(
         host_parsed = parse_url(host)
 
     if position is not None:
-        position_parsed = tuple(float(x) for x in position.split(","))
+        maybe_position = tuple(float(x) for x in position.split(","))
+        if len(maybe_position) != 3:
+            raise ValueError(
+                f"Position must be three floats separated by a comma. Got {maybe_position} instead."
+            )
+        position_parsed = maybe_position
+
     else:
         position_parsed = position
+
+    if cross_section_scale is not None:
+        cross_section_scale_parsed = float(cross_section_scale)
+    else:
+        cross_section_scale_parsed = None
 
     viewer = view_bsxml(
         bs_model=parse_url(bigstitcher_xml),
@@ -302,7 +321,7 @@ def view_bsxml_cli(
         channels=channels_parsed,
         transform_index=transform_index,
         contrast_limits=contrast_limits_parsed,
-        cross_section_scale=cross_section_scale,
+        cross_section_scale=cross_section_scale_parsed,
         position=position_parsed,
         interest_points=interest_points,
     )
@@ -326,15 +345,14 @@ def view_bsxml(
     *,
     bs_model: SpimData2,
     host: URL | None = None,
-    view_setups: str | None = None,
-    channels: str | None = None,
+    view_setups: Iterable[str] | None = None,
+    channels: Iterable[int] | None = None,
     contrast_limits: tuple[int, int] | None,
     cross_section_scale: float | None = None,
-    position: float | None = None,
+    position: tuple[float, float, float] | None = None,
     interest_points: Literal["points", "matches"] | None = None,
     transform_index: int,
 ) -> neuroglancer.Viewer:
-
     display_settings: dict[str, int | None]
     if contrast_limits is not None:
         display_settings = {
