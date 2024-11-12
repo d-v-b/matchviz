@@ -368,6 +368,23 @@ def parse_matches(
     return match_result
 
 
+def parse_interest_point_params(params: str) -> dict[str, str]:
+    """
+    Convert a semi-structured string in the ViewInterestPoints element of bigstitcher xml documents
+    to a key: value pair.
+    A string like 'DOG (Spark) s=2.0 t=0.005' will be mapped to `{'s': '2.0', 't': '0.005'}`
+    """
+    split_ws = params.split(" ")
+    result: dict[str, str] = {}
+
+    for x in split_ws:
+        split_param = x.split("=")
+        if len(split_param) == 2:
+            result[split_param[0]] = split_param[1]
+
+    return result
+
+
 def read_interest_points(
     *,
     bs_model: SpimData2,
@@ -376,11 +393,20 @@ def read_interest_points(
 ):
     """
     Load interest points and optionally correspondences from a bigstitcher-formatted n5 group as
-    polars dataframes for a single tile.
+    polars dataframes for a single image. In the event that bigstitcher performed downsampling before
+    interest point detection, the interest points coordinates will be returned in the coordinate
+    system of the full-resolution image.
     """
+
     log = structlog.get_logger()
     ips_by_setup = {v.setup: v for v in bs_model.view_interest_points.elements}
     path = ips_by_setup[image_id].path
+    # these are the parameters that describe the interest point detection method
+    params = parse_interest_point_params(ips_by_setup[image_id].params)
+    ds_xy = float(params.get("downsampleXY", 1))
+    ds_z = float(params.get("downsampleZ", 1))
+
+    downsampling_factors = {"z": ds_z, "y": ds_xy, "x": ds_xy}
 
     if isinstance(store, (str, URL)):
         store_parsed = zarr.N5FSStore(str(store), mode="r")
@@ -410,6 +436,17 @@ def read_interest_points(
     ids = arrays["id"][:]
     ids_list = ids.squeeze().tolist()
 
+    # correct for downsampling
+    ds_shift_xyz = np.array(
+        [
+            (downsampling_factors["x"] - 1) / 2,
+            (downsampling_factors["y"] - 1) / 2,
+            (downsampling_factors["z"] - 1) / 2,
+        ]
+    )
+
+    loc_ds_corrected = loc - ds_shift_xyz
+
     try:
         intensities = arrays["intensities"][:].squeeze().tolist()
     except KeyError:
@@ -420,7 +457,7 @@ def read_interest_points(
         data={
             "image_id_self": [image_id] * len(ids_list),
             "point_id_self": ids_list,
-            "point_loc_xyz": loc,
+            "point_loc_xyz": loc_ds_corrected,
             "point_intensity": intensities,
             "image_id_other": [None] * len(ids_list),
             "point_id_other": [None] * len(ids_list),
