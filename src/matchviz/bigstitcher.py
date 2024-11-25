@@ -64,6 +64,40 @@ def read_bigstitcher_xml(url: URL) -> SpimData2:
     return bs_model
 
 
+def get_final_transforms(
+    *, bs_model: SpimData2, image_id: str, transform_index: int
+) -> tuple[HoAffine[Any], HoAffine[Any]]:
+    image_loader = bs_model.sequence_description.image_loader
+    image_format: Literal["n5", "zarr"]
+    image_format = image_loader.fmt.split(".")[-1]
+    tforms = get_transforms(bs_model)[image_id]
+    # for zarr data, replace the translation to nominal grid transform because neuroglancer
+    # infers the position from zarr metadata
+
+    points_transform = array_to_hoaffine(np.eye(4), dimensions=xyz)
+
+    if image_format == "zarr":
+        tforms_filtered = tuple(
+            filter(lambda v: v.name != "Translation to Nominal Grid", tforms)
+        )
+
+        points_transform = [
+            t for t in tforms if t.name == "Translation to Nominal Grid"
+        ][0].transform
+    else:
+        tforms_filtered = tforms
+
+    tforms_indexed = [
+        *tforms_filtered[:transform_index],
+        tforms_filtered[transform_index],
+    ]
+
+    image_transform = compose_transforms(tforms_indexed)
+    final_points_transform = compose_hoaffines(points_transform, image_transform)
+
+    return image_transform, final_points_transform
+
+
 def spimdata_to_neuroglancer(
     xml_path: URL,
     *,
@@ -83,7 +117,7 @@ def spimdata_to_neuroglancer(
     }
     dimension_names_out = xyz[::-1]
     units = [unit] * len(dimension_names_out)
-    points_map = {}
+    points_map: dict[str, pl.DataFrame] = {}
     output_space = neuroglancer.CoordinateSpace(
         names=dimension_names_out,
         scales=[scales[k] for k in dimension_names_out],
@@ -150,35 +184,12 @@ def spimdata_to_neuroglancer(
             image_name = f"setup{view_reg.setup}/timepoint{view_reg.timepoint}"
             image_path = container_root / image_name
 
-        # bigstitcher stores the transformations in reverse order, i.e. the
-        # last transform in the series is the first one in the list
-
-        tforms = get_transforms(bs_model)[view_setup.ident]
-        # for zarr data, replace the translation to nominal grid transform because neuroglancer
-        # infers the position from zarr metadata
-
-        extra_points_transform = array_to_hoaffine(np.eye(4), dimensions=xyz)
-
-        if image_format == "zarr":
-            tforms_filtered = tuple(
-                filter(lambda v: v.name != "Translation to Nominal Grid", tforms)
-            )
-
-            extra_points_transform = [
-                t for t in tforms if t.name == "Translation to Nominal Grid"
-            ][0].transform
-        else:
-            tforms_filtered = tforms
-
-        tforms_indexed = [
-            *tforms_filtered[:transform_index],
-            tforms_filtered[transform_index],
-        ]
-
-        final_transform = compose_transforms(tforms_indexed)
+        image_transform, points_transform = get_final_transforms(
+            bs_model=bs_model, image_id=vs_id, transform_index=transform_index
+        )
 
         # neuroglancer expects ndim x ndim + 1 matrix
-        matrix = hoaffine_to_array(final_transform, dimensions=dimension_names_out)[:-1]
+        matrix = hoaffine_to_array(image_transform, dimensions=dimension_names_out)[:-1]
 
         # convert translations into the output coordinate space
         base_scale_dict = {
@@ -234,28 +245,92 @@ def spimdata_to_neuroglancer(
 
         annotation_layer = []
 
-        if interest_points == "points":
-            points_data = read_interest_points(
-                bs_model=bs_model,
-                image_id=vs_id,
-                store=xml_path.parent / "interestpoints.n5",
-            )
+        if interest_points is not None:
+            if vs_id not in points_map:
+                points_data = read_interest_points(
+                    bs_model=bs_model,
+                    image_id=vs_id,
+                    store=xml_path.parent / "interestpoints.n5",
+                )
+                points_map[vs_id] = points_data
+            else:
+                points_data = points_map[vs_id]
 
-            points_affine = compose_hoaffines(extra_points_transform, final_transform)
-
-            points_transform = neuroglancer.CoordinateSpaceTransform(
+            points_coordinate_space = neuroglancer.CoordinateSpaceTransform(
                 output_dimensions=input_space,
                 input_dimensions=input_space,
                 source_rank=len(dimension_names_out),
-                matrix=hoaffine_to_array(points_affine, dimensions=dimension_names_out)[
-                    :-1
-                ],
             )
 
-            # points_data = points_data.with_columns(loc_xyz_transformed=locs_transformed)
+            points_coordinate_space = neuroglancer.CoordinateSpaceTransform(
+                output_dimensions=input_space,
+                input_dimensions=input_space,
+                source_rank=len(dimension_names_out),
+                matrix=hoaffine_to_array(
+                    points_transform, dimensions=dimension_names_out
+                )[:-1],
+            )
+
             points_map[vs_id] = points_data
+
+            if interest_points == "points":
+                # pts_transformed = apply_hoaffine(tx=points_transform, data=points_data["point_loc_xyz"].to_numpy(), dimensions=xyz)
+                pts_transformed = points_data["point_loc_xyz"].to_numpy()
+                annotations = [
+                    neuroglancer.PointAnnotation(
+                        id=idx, point=point, props=[color_str, 10]
+                    )
+                    for idx, point in enumerate(pts_transformed[:, ::-1])
+                ]
+            elif interest_points == "matches":
+                matches_data = points_data.filter(
+                    pl.col("image_id_other").is_not_null()
+                )
+                annotations = []
+                for other_image_id in matches_data["image_id_other"].unique():
+                    _other_image_id = other_image_id[0]
+                    if _other_image_id not in points_map:
+                        _other_points = read_interest_points(
+                            bs_model=bs_model,
+                            image_id=_other_image_id,
+                            store=xml_path.parent / "interestpoints.n5",
+                        )
+                        points_map[_other_image_id] = _other_points
+                    else:
+                        _other_points = points_map[other_image_id]
+
+                    joined = matches_data.join(
+                        _other_points,
+                        left_on="point_id_other",
+                        right_on="point_id_self",
+                    )
+                    points_a, points_b = (
+                        joined["point_loc_xyz"].to_numpy()[:, ::-1],
+                        joined["point_loc_xyz_right"].to_numpy()[:, ::-1],
+                    )
+
+                    # the points for the current image will already be transformed by the neuroglancer affine transform,
+                    # but we need to apply the other image's transform to the points for the other image
+                    annotations.extend(
+                        [
+                            neuroglancer.LineAnnotation(
+                                id=idx,
+                                point_a=point_a,
+                                point_b=point_b,
+                                props=[color_str, 10],
+                            )
+                            for idx, (point_a, point_b) in enumerate(
+                                zip(points_a, points_b)
+                            )
+                        ]
+                    )
+
+            else:
+                raise ValueError(
+                    f"Invalid interest points specification: {interest_points}"
+                )
             annotation_layer = neuroglancer.LocalAnnotationLayer(
-                transform=points_transform,
+                transform=points_coordinate_space,
                 dimensions=output_space,
                 annotation_properties=[
                     neuroglancer.AnnotationPropertySpec(
@@ -269,17 +344,9 @@ def spimdata_to_neuroglancer(
                         default=10,
                     ),
                 ],
-                annotations=[
-                    neuroglancer.PointAnnotation(
-                        id=idx, point=point, props=[color_str, 10]
-                    )
-                    for idx, point in enumerate(
-                        points_data["point_loc_xyz"].to_numpy()[:, ::-1]
-                    )
-                ],
+                annotations=annotations,
                 shader=annotation_shader,
             )
-
             state.layers.append(name="interest_points", layer=annotation_layer)
 
     return state
@@ -401,12 +468,6 @@ def read_interest_points(
     log = structlog.get_logger()
     ips_by_setup = {v.setup: v for v in bs_model.view_interest_points.elements}
     path = ips_by_setup[image_id].path
-    # these are the parameters that describe the interest point detection method
-    params = parse_interest_point_params(ips_by_setup[image_id].params)
-    ds_xy = float(params.get("downsampleXY", 1))
-    ds_z = float(params.get("downsampleZ", 1))
-
-    downsampling_factors = {"z": ds_z, "y": ds_xy, "x": ds_xy}
 
     if isinstance(store, (str, URL)):
         store_parsed = zarr.N5FSStore(str(store), mode="r")
@@ -436,17 +497,6 @@ def read_interest_points(
     ids = arrays["id"][:]
     ids_list = ids.squeeze().tolist()
 
-    # correct for downsampling
-    ds_shift_xyz = np.array(
-        [
-            (downsampling_factors["x"] - 1) / 2,
-            (downsampling_factors["y"] - 1) / 2,
-            (downsampling_factors["z"] - 1) / 2,
-        ]
-    )
-
-    loc_ds_corrected = loc - ds_shift_xyz
-
     try:
         intensities = arrays["intensities"][:].squeeze().tolist()
     except KeyError:
@@ -457,7 +507,7 @@ def read_interest_points(
         data={
             "image_id_self": [image_id] * len(ids_list),
             "point_id_self": ids_list,
-            "point_loc_xyz": loc_ds_corrected,
+            "point_loc_xyz": loc,
             "point_intensity": intensities,
             "image_id_other": [None] * len(ids_list),
             "point_id_other": [None] * len(ids_list),
