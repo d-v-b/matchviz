@@ -11,6 +11,7 @@ from typing import Annotated, Any, Literal, cast, TYPE_CHECKING, Iterable
 from typing_extensions import TypedDict, deprecated
 from pydantic import BaseModel, BeforeValidator, Field
 from pydantic_zarr.v2 import ArraySpec, GroupSpec
+import zarr.errors
 from matchviz.annotation import write_line_annotations, write_point_annotations
 import random
 import colorsys
@@ -913,17 +914,24 @@ def get_image_group(bigstitcher_xml: URL, image_id: str) -> dict[str, xarray.Dat
     bs_model = read_bigstitcher_xml(bigstitcher_xml)
     image_loader = bs_model.sequence_description.image_loader
     if isinstance(image_loader, ZarrImageLoader):
-        # not sure bigstitcher support local zarr arrays yet
-        scheme = "s3://"
+        # not sure if bigstitcher support local zarr arrays yet
+        scheme = "s3"
         bucket = image_loader.s3bucket
-        path = image_loader.zarr.path
+        base_url = URL.build(scheme=scheme, authority=bucket)
+        # bdv is inconsistent about path normalization, so we remove the leading /
+        url_with_path = base_url.with_path(image_loader.zarr.path)
+
         zgroups_by_setup = {s.setup: s for s in image_loader.zgroups.elements}
 
         if image_id not in zgroups_by_setup:
             raise ValueError(f"image {image_id} not found in zarr groups")
 
         group_name = zgroups_by_setup[image_id].path
-        zgroup = zarr.open_group(f"{scheme}{bucket}/{path}/{group_name}", mode="r")
+        url_with_group = url_with_path.joinpath(group_name)
+        try:
+            zgroup = zarr.open_group(str(url_with_group), mode="r")
+        except zarr.errors.GroupNotFoundError:
+            raise zarr.errors.GroupNotFoundError(str(url_with_group))
         msg = read_multiscale_group(
             zgroup, array_wrapper={"name": "dask_array", "config": {"chunks": "auto"}}
         )
