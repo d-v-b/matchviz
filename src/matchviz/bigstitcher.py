@@ -29,7 +29,7 @@ from matchviz.transform import (
     hoaffine_to_array,
 )
 from matchviz.types import TileCoordinate
-from pydantic_bigstitcher.transform import HoAffine
+from pydantic_bigstitcher.transform import HoAffine, Transform
 from pydantic_bigstitcher import ZarrImageLoader
 
 if TYPE_CHECKING:
@@ -75,26 +75,32 @@ def get_final_transforms(
     # for zarr data, replace the translation to nominal grid transform because neuroglancer
     # infers the position from zarr metadata
 
-    points_transform = array_to_hoaffine(np.eye(4), dimensions=xyz)
+    identity = Transform(
+        name="identity",
+        type="affine",
+        transform=array_to_hoaffine(np.eye(4), dimensions=xyz),
+    )
 
     if image_format == "zarr":
-        tforms_filtered = tuple(
-            filter(lambda v: v.name != "Translation to Nominal Grid", tforms)
-        )
+        tforms_filtered: tuple[Transform, ...] = ()
+        for tform in tforms:
+            if tform.name == "Translation to Nominal Grid":
+                tforms_filtered += (identity,)
+            else:
+                tforms_filtered += (tform,)
 
-        points_transform = [
-            t for t in tforms if t.name == "Translation to Nominal Grid"
-        ][0].transform
+        # insert an identity transform instead of the nominal grid transform
+        identity = [t for t in tforms if t.name == "Translation to Nominal Grid"][
+            0
+        ].transform
     else:
         tforms_filtered = tforms
-
     tforms_indexed = [
         *tforms_filtered[:transform_index],
         tforms_filtered[transform_index],
     ]
-
     image_transform = compose_transforms(tforms_indexed)
-    final_points_transform = compose_hoaffines(points_transform, image_transform)
+    final_points_transform = compose_hoaffines(identity, image_transform)
 
     return image_transform, final_points_transform
 
@@ -153,7 +159,7 @@ def spimdata_to_neuroglancer(
             prefix = URL(f"s3://{image_loader.s3bucket}")
         else:
             prefix = base_url
-        container_root = prefix / getattr(image_loader, image_format).path
+        container_root = prefix / getattr(image_loader, image_format).path.lstrip("/")
     else:
         container_root = base_url / getattr(image_loader, image_format).path
 
