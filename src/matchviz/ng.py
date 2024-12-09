@@ -2,7 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 import neuroglancer
-from pydantic_bigstitcher.transform import HoAffine
+import numpy as np
 
 NeuroglancerViewerStyle = Literal["images_combined", "images_split"]
 
@@ -33,8 +33,12 @@ fnames: dict[NeuroglancerViewerStyle, FileName] = {
 
 
 def get_coordinate_space(
-    names, units, scales, transform: HoAffine
-) -> CoordinateSpaceTransform:
-    input_space = neuroglancer.CoordinateSpace(
-        names=dimension_names_out, units=units, scales=input_scales
+    names, units, scales, transform: np.ndarray
+) -> neuroglancer.CoordinateSpaceTransform:
+    input_space = neuroglancer.CoordinateSpace(names=names, units=units, scales=scales)
+    return neuroglancer.CoordinateSpaceTransform(
+        output_dimensions=input_space,
+        input_dimensions=input_space,
+        source_rank=len(names),
+        matrix=transform,
     )
