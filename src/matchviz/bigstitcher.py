@@ -1,5 +1,4 @@
 from __future__ import annotations
-from itertools import accumulate
 import pydantic_bigstitcher.transform
 import xarray
 from zarr import N5FSStore
@@ -100,7 +99,7 @@ def get_final_transforms(
         tforms_filtered[transform_index],
     ]
     image_transform = compose_transforms(tforms_indexed)
-    final_points_transform = compose_hoaffines(identity, image_transform)
+    final_points_transform = compose_hoaffines(identity.transform, image_transform)
 
     return image_transform, final_points_transform
 
@@ -167,6 +166,7 @@ def spimdata_to_neuroglancer(
         vs_id = view_reg.setup
 
         if view_setups is not None and vs_id not in view_setups:
+            breakpoint()
             continue
 
         maybe_view_setups = tuple(
@@ -604,7 +604,16 @@ def compose_transforms(
     hoaffines = tuple(t.transform for t in transforms)
     if not all(isinstance(t, HoAffine) for t in hoaffines):
         raise ValueError("Expected all transforms to be of type HoAffine")
-    return tuple(accumulate(hoaffines, compose_hoaffines))[-1]
+
+    result: tuple[HoAffine, ...] = ()
+
+    for idx, h in enumerate(hoaffines):
+        if idx == 0:
+            result += (h,)
+        else:
+            result += (compose_hoaffines(h, result[-1]),)
+
+    return result[-1]
 
 
 class InterestPointsGroupMeta(BaseModel):
