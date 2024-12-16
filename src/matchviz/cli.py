@@ -24,7 +24,7 @@ from matchviz.bigstitcher import (
     save_interest_points,
 )
 from matchviz.core import parse_url
-from matchviz.neuroglancer_styles import (
+from matchviz.ng import (
     NeuroglancerViewerStyle,
     neuroglancer_view_styles,
 )
@@ -103,7 +103,10 @@ def plot_matches_cli(
 @click.option("--bigstitcher-xml", type=click.STRING, required=True)
 @click.option("--dest", type=click.STRING, required=True)
 @click.option("--image-names", type=click.STRING)
-def save_interest_points_cli(bigstitcher_xml: str, dest: str, image_names: str | None):
+@click.option("--timepoint", type=click.STRING)
+def save_interest_points_cli(
+    bigstitcher_xml: str, dest: str, image_names: str | None, timepoint: str | None
+):
     """
     Save bigstitcher interest points from n5 to neuroglancer precomputed annotations.
     """
@@ -118,20 +121,33 @@ def save_interest_points_cli(bigstitcher_xml: str, dest: str, image_names: str |
     else:
         image_names_parsed = image_names
 
+    if timepoint is None:
+        timepoint_parsed = "0"
+    else:
+        timepoint_parsed = timepoint
+
     save_points(
-        bigstitcher_url=src_parsed, dest=dest_parsed, image_names=image_names_parsed
+        bigstitcher_url=src_parsed,
+        dest=dest_parsed,
+        image_names=image_names_parsed,
+        timepoint=timepoint_parsed,
     )
 
 
 def save_points(
-    bigstitcher_url: URL, dest: URL, image_names: Iterable[str] | None = None
-):
+    *,
+    bigstitcher_url: URL,
+    dest: URL,
+    image_names: Iterable[str] | None = None,
+    timepoint: str,
+) -> None:
     bs_model = read_bigstitcher_xml(bigstitcher_url)
     save_interest_points(
         bs_model=bs_model,
         alignment_url=bigstitcher_url.parent,
         dest=dest,
         image_names=image_names,
+        timepoint=timepoint,
     )
 
 
@@ -165,8 +181,10 @@ def save_neuroglancer_json_cli(
 
     dest_path_parsed = dest_path.rstrip("/")
     if style is None or len(style) < 1:
-        style = neuroglancer_view_styles
-    for _style in style:
+        style_parsed = neuroglancer_view_styles
+    else:
+        style_parsed = style
+    for _style in style_parsed:
         out_path = save_neuroglancer_json(
             bigstitcher_xml=bigstitcher_xml_url,
             dest_url=dest_path_parsed,
