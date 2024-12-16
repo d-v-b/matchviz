@@ -13,7 +13,6 @@ import neuroglancer
 from matchviz.transform import (
     affine_to_array,
     array_to_affine,
-    array_to_translate,
     compose_hoaffines,
     hoaffine_to_array,
     translate_to_array,
@@ -47,19 +46,32 @@ def test_affine_to_array() -> None:
 
 def test_compose_transforms() -> None:
     dimensions = ("x", "y")
+    scale_a = (2, 3)
+    trans_a = (1, 2)
+
+    matrix_a = [[scale_a[0], 0, trans_a[0]], [0, scale_a[1], trans_a[1]], [0, 0, 1]]
+
+    scale_b = (0.5, 0.8)
+    trans_b = (3, 4)
+
+    matrix_b = [[scale_b[0], 0, trans_b[0]], [0, scale_b[1], trans_b[1]], [0, 0, 1]]
+
     tx_a: HoAffine = HoAffine(
-        affine=array_to_affine(np.eye(2) * 4, dimensions=dimensions),
-        translation={"x": 1, "y": 2},
+        affine=array_to_affine(np.eye(2) * scale_a, dimensions=dimensions),
+        translation=dict(zip(dimensions, trans_a)),
     )
     tx_b: HoAffine = HoAffine(
-        affine=array_to_affine(np.eye(2) * 2, dimensions=dimensions),
-        translation={"x": 3, "y": 4},
+        affine=array_to_affine(np.eye(2) * scale_b, dimensions=dimensions),
+        translation=dict(zip(dimensions, trans_b)),
     )
+
     observed = compose_hoaffines(tx_a, tx_b)
 
+    expected_mat = np.matmul(matrix_a, matrix_b)
+
     expected = HoAffine(
-        affine=array_to_affine(np.eye(2) * 8, dimensions=dimensions),
-        translation=array_to_translate(np.array([4, 6]), dimensions=dimensions),
+        affine=array_to_affine(expected_mat[:-1, :-1], dimensions=dimensions),
+        translation=dict(zip(dimensions, expected_mat[:, -1])),
     )
     assert observed == expected
 

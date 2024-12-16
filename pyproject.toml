@@ -5,9 +5,9 @@ build-backend = "hatchling.build"
 [project]
 name = "matchviz"
 dynamic = ["version"]
-description = ''
+description = 'Tools for visualizing image registration results.'
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "MIT"
 keywords = []
 authors = [
@@ -16,31 +16,29 @@ authors = [
 classifiers = [
   "Development Status :: 4 - Beta",
   "Programming Language :: Python",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: Implementation :: CPython",
   "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dependencies = [
-  "zarr==2.18", 
-  "tensorstore==0.1.62", 
-  "fsspec[s3]==2024.3.1", 
-  "neuroglancer==2.39.2", 
+  "zarr>=2.18", 
+  "tensorstore>=0.1.62", 
+  "fsspec[s3]>=2024.3.1", 
+  "neuroglancer>=2.39.2", 
   "pydantic-bigstitcher>=0.0.10", 
-  "pydantic-zarr==0.7.0",
-  "click==8.1.7",
+  "pydantic-zarr>=0.7.0",
+  "click>=8.1.7",
   "polars>=1.0",
-  "tqdm==4.66.4",
   "matplotlib",
   "xarray-ome-ngff>= 3.1.1, < 4",
   "structlog >= 24.4.0, <25"
   ]
 
 [project.urls]
-Documentation = "https://github.com/unknown/matchviz#readme"
-Issues = "https://github.com/unknown/matchviz/issues"
-Source = "https://github.com/unknown/matchviz"
+Documentation = "https://github.com/d-v-b/matchviz#readme"
+Issues = "https://github.com/d-v-b/matchviz/issues"
+Source = "https://github.com/d-v-b/matchviz"
 
 [tool.hatch.version]
 path = "src/matchviz/__about__.py"
@@ -69,7 +67,7 @@ cov = [
 ]
 
 [[tool.hatch.envs.test.matrix]]
-python = ["3.10"]
+python = ["3.11"]
 
 [tool.hatch.envs.types]
 dependencies = [

@@ -10,7 +10,6 @@ from matchviz.core import ome_ngff_to_coords, scale_points
 import pytest
 
 from matchviz.bigstitcher import (
-    image_name_to_tile_coord,
     parse_idmap,
     read_bigstitcher_xml,
     save_annotations,
@@ -53,19 +52,10 @@ def test_save_points_tile(tmpdir):
     alignment_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/interestpoints.n5/tpId_0_viewSetupId_0/"
     save_annotations(
         bs_model=bs_model,
-        image_id=0,
+        image_id="0",
         alignment_url=alignment_url,
         dest_url=str(tmpdir),
     )
-
-
-@pytest.mark.parametrize("x", (0, 1))
-@pytest.mark.parametrize("y", (0, 1))
-@pytest.mark.parametrize("z", (0, 1))
-@pytest.mark.parametrize("ch", ("488", "561"))
-def test_image_name_to_coordinate(x, y, z, ch):
-    image_name = f"tile_x_{x:04}_y_{y:04}_z_{z:04}_ch_{ch}.zarr"
-    assert image_name_to_tile_coord(image_name) == {"x": x, "y": y, "z": z, "ch": ch}
 
 
 def test_parse_idmap():
