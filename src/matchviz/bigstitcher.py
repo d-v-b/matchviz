@@ -46,6 +46,8 @@ import neuroglancer
 from neuroglancer.static_file_server import StaticFileServer
 from pydantic_bigstitcher.transform import Axes as T_XYZ
 from xarray_ome_ngff.v04.multiscale import read_multiscale_group
+import matplotlib.pyplot as plt
+from itertools import combinations
 
 xyz = ("x", "y", "z")
 random.seed(0)
@@ -203,6 +205,7 @@ def spimdata_to_neuroglancer(
         image_name = vs_id
 
         image_source = f"{image_format}://{image_path}"
+
         hue, sat, lum = (
             random.random(),
             0.5 + random.random() / 2.0,
@@ -455,7 +458,7 @@ def read_interest_points(
     bs_model: SpimData2,
     image_id: str,
     timepoint: str,
-    store: str | URL | N5FSStore,
+    store: str | URL | N5FSStore | None = None,
 ) -> pl.DataFrame:
     """
     Load interest points and optionally correspondences from a bigstitcher-formatted n5 group as
@@ -473,8 +476,9 @@ def read_interest_points(
             f"The combination of image_id and timepoint ({image_id}, {timepoint}) was not found in the bigstitcher xml file."
         )
     path = ips_by_setup[(image_id, timepoint)].path
-
-    if isinstance(store, (str, URL)):
+    if store is None:
+        store_parsed = N5FSStore(URL(path).parent)
+    elif isinstance(store, (str, URL)):
         store_parsed = zarr.N5FSStore(str(store), mode="r")
     else:
         store_parsed = store
@@ -724,8 +728,7 @@ def save_annotations(
         )
 
         transforms = get_transforms(bs_model=bs_model)[img_id]
-        # not clear which transformation to use here, lets take the next-to-last
-        affine_composed = compose_transforms(transforms[:-1])
+        affine_composed = compose_transforms(transforms)
         locs_transformed = apply_hoaffine(
             tx=affine_composed,
             data=points_data["point_loc_xyz"].to_numpy(),
@@ -764,7 +767,7 @@ def save_annotations(
     if len(matches) > 0:
         log.info(f"Saving matches to {lines_url}.")
         for image_id_other_tup, match_group in matches.group_by("image_id_other"):
-            image_id_other = image_id_other_tup[0]
+            image_id_other = cast(str, image_id_other_tup[0])
             joined = points_map[image_id_other].join(
                 match_group,
                 left_on="point_id_self",
@@ -960,3 +963,35 @@ def get_image_group(bigstitcher_xml: URL, image_id: str) -> dict[str, xarray.Dat
         return msg
     else:
         raise NotImplementedError
+
+
+def interval_shift(offset, interval: tuple[int, int]):
+    return interval[0] + offset, interval[1] + offset
+
+
+def plot_ip(points: pl.DataFrame, img: xarray.DataArray, point_idx: int) -> plt.Figure:
+    """
+    Plot a single interest point by index against the orthoslices of the array around that point
+    """
+    pt_xyz = points.filter(pl.col("point_id_self") == point_idx)["point_loc_xyz"][0]
+    pt_xyz_dict = {"x": pt_xyz[0], "y": pt_xyz[1], "z": pt_xyz[2]}
+    print(pt_xyz_dict)
+    context = {"z": (-100, 100), "y": (-100, 100), "x": (-100, 100)}
+
+    fig, axs = plt.subplots(ncols=2, nrows=2, dpi=200, figsize=(12, 12))
+    for idx, (a, b) in enumerate(combinations(context.keys(), 2)):
+        ax = axs.ravel()[idx]
+        point_axis = tuple(set(context.keys()) - set((a, b)))[0]
+        selection = {
+            k: np.linspace(
+                *np.round(interval_shift(np.round(pt_xyz_dict[k]), context[k])),
+                (context[k][1] - context[k][0]) + 1,
+            ).astype("int")
+            for k in (a, b)
+        }
+        selection[point_axis] = np.round(pt_xyz_dict[point_axis]).astype("int")
+        data = img.isel(**selection).squeeze()
+        data.plot.imshow(ax=ax, robust=True, cmap="gray")
+        ax.axvline(data[b].mean())
+        ax.axhline(data[a].mean())
+    return fig

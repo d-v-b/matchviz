@@ -54,6 +54,7 @@ def ome_ngff_to_coords(url: str | URL) -> Coords:
         for axis, s, t in zip(multi_meta.axes, scale, trans)
     }  # type: ignore
 
+
 def scale_point(point: Sequence[float], params: Sequence[float]):
     return np.multiply(point, params)
 
@@ -75,9 +76,7 @@ def translate_point(point: Sequence[float], params: Sequence[float]):
     return np.add(point, params)
 
 
-def translate_points_xyz(
-        *, 
-        points_array: np.ndarray, coords: Coords) -> np.ndarray:
+def translate_points_xyz(*, points_array: np.ndarray, coords: Coords) -> np.ndarray:
     """
     Apply a translation in world coordinates
     """

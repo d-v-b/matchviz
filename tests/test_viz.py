@@ -1,12 +1,13 @@
 import json
 import os
+
+from yarl import URL
 from matchviz import (
     create_neuroglancer_state,
-    plot_points,
 )
 from matchviz.annotation import AnnotationWriterFSSpec
 import neuroglancer
-from matchviz.core import ome_ngff_to_coords, scale_points
+from matchviz.cli import plot_matches
 import pytest
 
 from matchviz.bigstitcher import (
@@ -69,13 +70,11 @@ def test_load_points():
     _ = read_interest_points(store=url, path="tpId_0_viewSetupId_3/beads/")
 
 
-def test_plot_points():
-    ip_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/interestpoints.n5"
-    image_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38/SPIM.ome.zarr/tile_x_0000_y_0000_z_0000_ch_488.zarr"
-    coords = ome_ngff_to_coords(image_url)
-    points_df = read_interest_points(store=ip_url, path="tpId_0_viewSetupId_3/beads/")
-    scale_points(points_df, coords)
-    plot_points(points_df, image_url)
+def test_plot_points(tmpdir):
+    bs_xml = URL(
+        "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/bigstitcher.xml"
+    )
+    _ = plot_matches(bigstitcher_xml=bs_xml, metric="transform_error_max")
 
 
 @pytest.mark.skip
