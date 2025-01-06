@@ -12,7 +12,7 @@ from matchviz.bigstitcher import image_name_to_tile_coord
 from matchviz.core import get_url, parse_url
 from matchviz.core import get_histogram_bounds_batch
 from matchviz.core import tile_coordinate_to_rgba
-from matchviz.neuroglancer_styles import NeuroglancerViewerStyle
+from matchviz.ng import NeuroglancerViewerStyle
 from functools import reduce
 from concurrent.futures import ThreadPoolExecutor
 from matplotlib import colors

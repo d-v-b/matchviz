@@ -1,5 +1,4 @@
 from __future__ import annotations
-from itertools import accumulate
 import pydantic_bigstitcher.transform
 import xarray
 from zarr import N5FSStore
@@ -47,6 +46,8 @@ import neuroglancer
 from neuroglancer.static_file_server import StaticFileServer
 from pydantic_bigstitcher.transform import Axes as T_XYZ
 from xarray_ome_ngff.v04.multiscale import read_multiscale_group
+import matplotlib.pyplot as plt
+from itertools import combinations
 
 xyz = ("x", "y", "z")
 random.seed(0)
@@ -90,9 +91,7 @@ def get_final_transforms(
                 tforms_filtered += (tform,)
 
         # insert an identity transform instead of the nominal grid transform
-        identity = [t for t in tforms if t.name == "Translation to Nominal Grid"][
-            0
-        ].transform
+        identity = [t for t in tforms if t.name == "Translation to Nominal Grid"][0]
     else:
         tforms_filtered = tforms
     tforms_indexed = [
@@ -100,8 +99,7 @@ def get_final_transforms(
         tforms_filtered[transform_index],
     ]
     image_transform = compose_transforms(tforms_indexed)
-    final_points_transform = compose_hoaffines(identity, image_transform)
-
+    final_points_transform = compose_transforms([identity, *tforms_indexed])
     return image_transform, final_points_transform
 
 
@@ -124,7 +122,7 @@ def spimdata_to_neuroglancer(
     }
     dimension_names_out = xyz[::-1]
     units = [unit] * len(dimension_names_out)
-    points_map: dict[str, pl.DataFrame] = {}
+    points_map: dict[tuple[str, str], pl.DataFrame] = {}
     output_space = neuroglancer.CoordinateSpace(
         names=dimension_names_out,
         scales=[scales[k] for k in dimension_names_out],
@@ -165,6 +163,7 @@ def spimdata_to_neuroglancer(
 
     for view_reg in bs_model.view_registrations.elements:
         vs_id = view_reg.setup
+        tp_id = view_reg.timepoint
 
         if view_setups is not None and vs_id not in view_setups:
             continue
@@ -175,7 +174,6 @@ def spimdata_to_neuroglancer(
                 bs_model.sequence_description.view_setups.elements,
             )
         )
-
         if len(maybe_view_setups) > 1:
             raise ValueError(f"Ambiguous setup id {vs_id}.")
 
@@ -207,6 +205,7 @@ def spimdata_to_neuroglancer(
         image_name = vs_id
 
         image_source = f"{image_format}://{image_path}"
+
         hue, sat, lum = (
             random.random(),
             0.5 + random.random() / 2.0,
@@ -253,21 +252,16 @@ def spimdata_to_neuroglancer(
         annotation_layer = []
 
         if interest_points is not None:
-            if vs_id not in points_map:
+            if (vs_id, tp_id) not in points_map:
                 points_data = read_interest_points(
                     bs_model=bs_model,
                     image_id=vs_id,
+                    timepoint=tp_id,
                     store=xml_path.parent / "interestpoints.n5",
                 )
-                points_map[vs_id] = points_data
+                points_map[(vs_id, tp_id)] = points_data
             else:
-                points_data = points_map[vs_id]
-
-            points_coordinate_space = neuroglancer.CoordinateSpaceTransform(
-                output_dimensions=input_space,
-                input_dimensions=input_space,
-                source_rank=len(dimension_names_out),
-            )
+                points_data = points_map[(vs_id, tp_id)]
 
             points_coordinate_space = neuroglancer.CoordinateSpaceTransform(
                 output_dimensions=input_space,
@@ -281,7 +275,6 @@ def spimdata_to_neuroglancer(
             points_map[vs_id] = points_data
 
             if interest_points == "points":
-                # pts_transformed = apply_hoaffine(tx=points_transform, data=points_data["point_loc_xyz"].to_numpy(), dimensions=xyz)
                 pts_transformed = points_data["point_loc_xyz"].to_numpy()
                 annotations = [
                     neuroglancer.PointAnnotation(
@@ -296,15 +289,16 @@ def spimdata_to_neuroglancer(
                 annotations = []
                 for other_image_id in matches_data["image_id_other"].unique():
                     _other_image_id = other_image_id[0]
-                    if _other_image_id not in points_map:
+                    if (_other_image_id, tp_id) not in points_map:
                         _other_points = read_interest_points(
                             bs_model=bs_model,
                             image_id=_other_image_id,
+                            timepoint=tp_id,
                             store=xml_path.parent / "interestpoints.n5",
                         )
-                        points_map[_other_image_id] = _other_points
+                        points_map[(_other_image_id, tp_id)] = _other_points
                     else:
-                        _other_points = points_map[other_image_id]
+                        _other_points = points_map[(other_image_id, tp_id)]
 
                     joined = matches_data.join(
                         _other_points,
@@ -463,8 +457,9 @@ def read_interest_points(
     *,
     bs_model: SpimData2,
     image_id: str,
-    store: str | URL | N5FSStore,
-):
+    timepoint: str,
+    store: str | URL | N5FSStore | None = None,
+) -> pl.DataFrame:
     """
     Load interest points and optionally correspondences from a bigstitcher-formatted n5 group as
     polars dataframes for a single image. In the event that bigstitcher performed downsampling before
@@ -473,10 +468,17 @@ def read_interest_points(
     """
 
     log = structlog.get_logger()
-    ips_by_setup = {v.setup: v for v in bs_model.view_interest_points.elements}
-    path = ips_by_setup[image_id].path
-
-    if isinstance(store, (str, URL)):
+    ips_by_setup = {
+        (v.setup, v.timepoint): v for v in bs_model.view_interest_points.elements
+    }
+    if (image_id, timepoint) not in ips_by_setup:
+        raise KeyError(
+            f"The combination of image_id and timepoint ({image_id}, {timepoint}) was not found in the bigstitcher xml file."
+        )
+    path = ips_by_setup[(image_id, timepoint)].path
+    if store is None:
+        store_parsed = N5FSStore(URL(path).parent)
+    elif isinstance(store, (str, URL)):
         store_parsed = zarr.N5FSStore(str(store), mode="r")
     else:
         store_parsed = store
@@ -563,6 +565,7 @@ def read_all_interest_points(
                 read_interest_points,
                 bs_model=bs_model,
                 image_id=ip.setup,
+                timepoint=ip.timepoint,
                 store=store,
             )
         )
@@ -604,7 +607,16 @@ def compose_transforms(
     hoaffines = tuple(t.transform for t in transforms)
     if not all(isinstance(t, HoAffine) for t in hoaffines):
         raise ValueError("Expected all transforms to be of type HoAffine")
-    return tuple(accumulate(hoaffines, compose_hoaffines))[-1]
+
+    result: tuple[HoAffine, ...] = ()
+
+    for idx, h in enumerate(hoaffines):
+        if idx == 0:
+            result += (h,)
+        else:
+            result += (compose_hoaffines(h, result[-1]),)
+
+    return result[-1]
 
 
 class InterestPointsGroupMeta(BaseModel):
@@ -634,7 +646,12 @@ class PointsGroup(GroupSpec[InterestPointsGroupMeta, InterestPointsMembers]):
 
 
 def save_annotations(
-    *, bs_model: SpimData2, image_id: str, alignment_url: URL | str, dest_url: URL | str
+    *,
+    bs_model: SpimData2,
+    image_id: str,
+    timepoint: str,
+    alignment_url: URL | str,
+    dest_url: URL | str,
 ):
     """
     Load points and correspondences (matches) between a single tile an all other tiles, and save as neuroglancer
@@ -707,11 +724,11 @@ def save_annotations(
             bs_model=bs_model,
             image_id=img_id,
             store=ip_store,
+            timepoint=timepoint,
         )
 
         transforms = get_transforms(bs_model=bs_model)[img_id]
-        # not clear which transformation to use here, lets take the next-to-last
-        affine_composed = compose_transforms(transforms[:-1])
+        affine_composed = compose_transforms(transforms)
         locs_transformed = apply_hoaffine(
             tx=affine_composed,
             data=points_data["point_loc_xyz"].to_numpy(),
@@ -750,7 +767,7 @@ def save_annotations(
     if len(matches) > 0:
         log.info(f"Saving matches to {lines_url}.")
         for image_id_other_tup, match_group in matches.group_by("image_id_other"):
-            image_id_other = image_id_other_tup[0]
+            image_id_other = cast(str, image_id_other_tup[0])
             joined = points_map[image_id_other].join(
                 match_group,
                 left_on="point_id_self",
@@ -777,6 +794,7 @@ def save_interest_points(
     alignment_url: URL,
     dest: URL,
     image_names: Iterable[str] | None = None,
+    timepoint: str,
 ):
     """
     Save interest points for all tiles as collection of neuroglancer precomputed annotations. One
@@ -808,6 +826,7 @@ def save_interest_points(
             image_id=setup_id,
             alignment_url=alignment_url,
             dest_url=dest,
+            timepoint=timepoint,
         )
 
 
@@ -944,3 +963,35 @@ def get_image_group(bigstitcher_xml: URL, image_id: str) -> dict[str, xarray.Dat
         return msg
     else:
         raise NotImplementedError
+
+
+def interval_shift(offset, interval: tuple[int, int]):
+    return interval[0] + offset, interval[1] + offset
+
+
+def plot_ip(points: pl.DataFrame, img: xarray.DataArray, point_idx: int) -> plt.Figure:
+    """
+    Plot a single interest point by index against the orthoslices of the array around that point
+    """
+    pt_xyz = points.filter(pl.col("point_id_self") == point_idx)["point_loc_xyz"][0]
+    pt_xyz_dict = {"x": pt_xyz[0], "y": pt_xyz[1], "z": pt_xyz[2]}
+    print(pt_xyz_dict)
+    context = {"z": (-100, 100), "y": (-100, 100), "x": (-100, 100)}
+
+    fig, axs = plt.subplots(ncols=2, nrows=2, dpi=200, figsize=(12, 12))
+    for idx, (a, b) in enumerate(combinations(context.keys(), 2)):
+        ax = axs.ravel()[idx]
+        point_axis = tuple(set(context.keys()) - set((a, b)))[0]
+        selection = {
+            k: np.linspace(
+                *np.round(interval_shift(np.round(pt_xyz_dict[k]), context[k])),
+                (context[k][1] - context[k][0]) + 1,
+            ).astype("int")
+            for k in (a, b)
+        }
+        selection[point_axis] = np.round(pt_xyz_dict[point_axis]).astype("int")
+        data = img.isel(**selection).squeeze()
+        data.plot.imshow(ax=ax, robust=True, cmap="gray")
+        ax.axvline(data[b].mean())
+        ax.axhline(data[a].mean())
+    return fig

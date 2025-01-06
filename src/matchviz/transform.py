@@ -61,15 +61,15 @@ def array_to_affine(
 ) -> pydantic_bigstitcher.transform.MatrixMap[Any]:
     return dict(zip(dimensions, (array_to_translate(row, dimensions) for row in array)))
 
+
 def compose_hoaffines(
     tx_a: pydantic_bigstitcher.transform.HoAffine[Any],
     tx_b: pydantic_bigstitcher.transform.HoAffine[Any],
 ) -> pydantic_bigstitcher.transform.HoAffine[Any]:
-
-    dimensions = tx_a.affine.keys()
+    dimensions = tuple(tx_a.affine.keys())
     homogeneous_matrix = hoaffine_to_array(
-        tx_b, dimensions=dimensions
-    ) @ hoaffine_to_array(tx_a, dimensions=dimensions)
+        tx_a, dimensions=dimensions
+    ) @ hoaffine_to_array(tx_b, dimensions=dimensions)
 
     new_affine = homogeneous_matrix[:-1, :-1]
     new_trans = homogeneous_matrix[:-1, -1]

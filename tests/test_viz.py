@@ -1,16 +1,16 @@
 import json
 import os
+
+from yarl import URL
 from matchviz import (
     create_neuroglancer_state,
-    plot_points,
 )
 from matchviz.annotation import AnnotationWriterFSSpec
 import neuroglancer
-from matchviz.core import ome_ngff_to_coords, scale_points
+from matchviz.cli import plot_matches
 import pytest
 
 from matchviz.bigstitcher import (
-    image_name_to_tile_coord,
     parse_idmap,
     read_bigstitcher_xml,
     save_annotations,
@@ -53,19 +53,10 @@ def test_save_points_tile(tmpdir):
     alignment_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/interestpoints.n5/tpId_0_viewSetupId_0/"
     save_annotations(
         bs_model=bs_model,
-        image_id=0,
+        image_id="0",
         alignment_url=alignment_url,
         dest_url=str(tmpdir),
     )
-
-
-@pytest.mark.parametrize("x", (0, 1))
-@pytest.mark.parametrize("y", (0, 1))
-@pytest.mark.parametrize("z", (0, 1))
-@pytest.mark.parametrize("ch", ("488", "561"))
-def test_image_name_to_coordinate(x, y, z, ch):
-    image_name = f"tile_x_{x:04}_y_{y:04}_z_{z:04}_ch_{ch}.zarr"
-    assert image_name_to_tile_coord(image_name) == {"x": x, "y": y, "z": z, "ch": ch}
 
 
 def test_parse_idmap():
@@ -79,13 +70,11 @@ def test_load_points():
     _ = read_interest_points(store=url, path="tpId_0_viewSetupId_3/beads/")
 
 
-def test_plot_points():
-    ip_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/interestpoints.n5"
-    image_url = "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38/SPIM.ome.zarr/tile_x_0000_y_0000_z_0000_ch_488.zarr"
-    coords = ome_ngff_to_coords(image_url)
-    points_df = read_interest_points(store=ip_url, path="tpId_0_viewSetupId_3/beads/")
-    scale_points(points_df, coords)
-    plot_points(points_df, image_url)
+def test_plot_points(tmpdir):
+    bs_xml = URL(
+        "s3://aind-open-data/exaSPIM_708373_2024-04-02_19-49-38_alignment_2024-05-07_18-15-25/bigstitcher.xml"
+    )
+    _ = plot_matches(bigstitcher_xml=bs_xml, metric="transform_error_max")
 
 
 @pytest.mark.skip
